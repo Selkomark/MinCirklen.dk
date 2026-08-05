@@ -1,0 +1,21 @@
+.ds-shell-view {
+  flex: 1;
+  min-height: 0;
+}
+
+.ds-shell-view--fixed {
+  overflow: hidden;
+}
+
+.ds-shell-view--scroll {
+  overflow: auto;
+}
+
+.ds-inline-link,
+.ds-inline-link:visited {
+  color: var(--accent-safe);
+}
+
+.ds-inline-link:hover {
+  color: var(--accent-safe-hover);
+}

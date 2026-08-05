@@ -1,0 +1,52 @@
+name: Deploy web app
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web-app/**'
+      - '.github/workflows/deploy-docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+      - name: Install dependencies
+        working-directory: web-app
+        run: bun install --frozen-lockfile
+      - name: Build docs site
+        working-directory: web-app
+        run: bun run build:docs
+      - name: SPA fallback for direct page links
+        # GitHub Pages has no server-side routing, so a hard load of e.g. /pages/privacy-policy
+        # 404s unless 404.html itself boots the app — it then reads location.pathname client-side
+        # and renders the matching public page (see matchPublicPage() in src/App.tsx).
+        run: cp web-app/dist-docs/index.html web-app/dist-docs/404.html
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web-app/dist-docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,96 @@
+import { Button } from '../components/Button'
+import { Alert } from '../components/Alert'
+import { publicPagePath } from '../publicPages/pages'
+import { SiteHeader } from '../SiteHeader'
+import { SiteFooter } from '../SiteFooter'
+import { GoogleIcon } from '../GoogleIcon'
+import { useDocumentTitle } from '../useDocumentTitle'
+
+export interface LoginPageProps {
+  onGoogleContinue: () => void
+}
+
+// Google is the only working provider today. The others are listed and disabled
+// rather than omitted, so the layout already has room for them once they're wired up.
+const OTHER_PROVIDERS = [
+  { id: 'apple', label: 'Continue with Apple' },
+  { id: 'microsoft', label: 'Continue with Microsoft' },
+]
+
+export function LoginPage({ onGoogleContinue }: LoginPageProps) {
+  useDocumentTitle('Log in — MinCirklen')
+
+  return (
+    <div style={{ minHeight: '100vh', fontFamily: 'var(--font-family-base)' }}>
+      <SiteHeader showJoinCta={false} />
+
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'center',
+          padding: 'clamp(20px, 6vw, 64px) clamp(16px, 5vw, 24px)',
+          boxSizing: 'border-box',
+        }}
+      >
+        <div style={{ width: '100%', maxWidth: 440, display: 'flex', flexDirection: 'column', gap: 'clamp(20px, 4vw, 28px)' }}>
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ fontSize: 'var(--font-size-xl)', fontWeight: 'var(--font-weight-bold)', color: 'var(--text-primary)' }}>
+              Log in to MinCirklen
+            </div>
+            <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginTop: 6 }}>
+              One quick sign-in, then straight to your circle.
+            </div>
+          </div>
+
+          <div
+            style={{
+              background: 'var(--surface-raised)',
+              border: '0.5px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-lg)',
+              padding: 'clamp(20px, 4vw, 32px)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+            }}
+          >
+            <Button variant="secondary" onPress={onGoogleContinue} style={{ width: '100%' }}>
+              <GoogleIcon />
+              Continue with Google
+            </Button>
+
+            {OTHER_PROVIDERS.map((provider) => (
+              <Button
+                key={provider.id}
+                variant="secondary"
+                isDisabled
+                style={{ width: '100%', justifyContent: 'space-between' }}
+              >
+                <span>{provider.label}</span>
+                <span style={{ fontSize: 'var(--font-size-xs)' }}>Coming soon</span>
+              </Button>
+            ))}
+
+            <Alert variant="safe" style={{ marginTop: 8 }}>
+              We only use this to keep circles free of spam and duplicate accounts. Nothing
+              from your account is ever shown to other participants.
+            </Alert>
+          </div>
+
+          <div style={{ textAlign: 'center', fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>
+            By continuing you agree to our{' '}
+            <a href={publicPagePath('terms-and-conditions')} className="ds-inline-link">
+              Terms and Conditions
+            </a>{' '}
+            and{' '}
+            <a href={publicPagePath('privacy-policy')} className="ds-inline-link">
+              Privacy Policy
+            </a>
+            .
+          </div>
+        </div>
+      </div>
+
+      <SiteFooter />
+    </div>
+  )
+}
