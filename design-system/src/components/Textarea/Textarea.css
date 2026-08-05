@@ -1,0 +1,37 @@
+.ds-textarea {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ds-textarea__label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-primary);
+}
+
+.ds-textarea__input {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-base);
+  resize: vertical;
+  transition: border-color var(--duration-fast) var(--easing-standard);
+}
+
+.ds-textarea__input:hover {
+  border-color: var(--border-strong);
+}
+
+.ds-textarea__input:focus-visible {
+  border-color: var(--accent-safe);
+}
+
+.ds-textarea__hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}

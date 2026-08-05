@@ -1,0 +1,8 @@
+{
+  "projectId": "34874b81-8ee8-4684-b01d-6e4a24d46e92",
+  "shape": "package",
+  "pkg": "mincirklen-design-system",
+  "buildCmd": "bun run build",
+  "cssEntry": "./dist/style.css",
+  "readmeHeader": ".design-sync/conventions.md"
+}
