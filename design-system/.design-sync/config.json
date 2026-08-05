@@ -4,5 +4,9 @@
   "pkg": "mincirklen-design-system",
   "buildCmd": "bun run build",
   "cssEntry": "./dist/style.css",
-  "readmeHeader": ".design-sync/conventions.md"
+  "readmeHeader": ".design-sync/conventions.md",
+  "overrides": {
+    "DatePicker": { "cardMode": "single", "primaryStory": "Default" },
+    "Select": { "cardMode": "single", "primaryStory": "Default" }
+  }
 }
