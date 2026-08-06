@@ -22,6 +22,7 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "build": "vite build --config vite.lib.config.ts && vite build --config vite.lib.code-editor.config.ts && tsc -p tsconfig.lib.json",
+    "build:docs": "vite build",
     "preview": "vite preview"
   },
   "peerDependencies": {
