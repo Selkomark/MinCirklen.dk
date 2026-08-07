@@ -1,8 +1,11 @@
 import { useState } from 'react'
+import type { CalendarDate, Time } from '@internationalized/date'
 import { Button } from '../components/Button'
 import { Badge } from '../components/Badge'
 import { Checkbox } from '../components/Checkbox'
 import { Alert } from '../components/Alert'
+import { DatePicker } from '../components/DatePicker'
+import { TimePicker } from '../components/TimePicker'
 
 type Path = 'join' | 'create' | null
 
@@ -126,13 +129,13 @@ export function NewSessionPage({ onComplete }: NewSessionPageProps) {
 
   const [topicId, setTopicId] = useState<string | null>(null)
   const [sizeId, setSizeId] = useState<string | null>(null)
-  const [createDate, setCreateDate] = useState('')
-  const [createTime, setCreateTime] = useState('')
+  const [createDate, setCreateDate] = useState<CalendarDate | null>(null)
+  const [createTime, setCreateTime] = useState<Time | null>(null)
   const [createDuration, setCreateDuration] = useState<string | null>(null)
 
   const [searchText, setSearchText] = useState('')
   const [filterPanelOpen, setFilterPanelOpen] = useState(false)
-  const [filterDate, setFilterDate] = useState('')
+  const [filterDate, setFilterDate] = useState<CalendarDate | null>(null)
   const [filterDuration, setFilterDuration] = useState('')
   const [filterTopic, setFilterTopic] = useState('')
   const [filterSize, setFilterSize] = useState('')
@@ -153,12 +156,18 @@ export function NewSessionPage({ onComplete }: NewSessionPageProps) {
   }
 
   function applySearch() {
-    setApplied({ searchText, date: filterDate, duration: filterDuration, topic: filterTopic, size: filterSize })
+    setApplied({
+      searchText,
+      date: filterDate ? filterDate.toString() : '',
+      duration: filterDuration,
+      topic: filterTopic,
+      size: filterSize,
+    })
   }
 
   function clearFilters() {
     setSearchText('')
-    setFilterDate('')
+    setFilterDate(null)
     setFilterDuration('')
     setFilterTopic('')
     setFilterSize('')
@@ -331,8 +340,7 @@ export function NewSessionPage({ onComplete }: NewSessionPageProps) {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10 }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                        <label style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>Date</label>
-                        <input type="date" className="ds-textfield__input" value={filterDate} onChange={(e) => setFilterDate(e.target.value)} style={{ boxSizing: 'border-box', fontSize: 'var(--font-size-xs)', height: 34, padding: '0 8px', width: 140 }} />
+                        <DatePicker label="Date" value={filterDate} onChange={setFilterDate} style={{ width: 160 }} />
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                         <label style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>Duration</label>
@@ -420,8 +428,8 @@ export function NewSessionPage({ onComplete }: NewSessionPageProps) {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <label style={{ fontSize: 'var(--font-size-sm)', fontWeight: 'var(--font-weight-medium)', color: 'var(--text-primary)' }}>Date and time</label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  <input type="date" className="ds-textfield__input" value={createDate} onChange={(e) => setCreateDate(e.target.value)} style={{ flex: '1 1 140px', boxSizing: 'border-box' }} />
-                  <input type="time" className="ds-textfield__input" value={createTime} onChange={(e) => setCreateTime(e.target.value)} style={{ flex: '1 1 120px', boxSizing: 'border-box' }} />
+                  <DatePicker aria-label="Date" value={createDate} onChange={setCreateDate} style={{ flex: '1 1 200px' }} />
+                  <TimePicker aria-label="Time" value={createTime} onChange={setCreateTime} style={{ flex: '1 1 160px' }} />
                 </div>
               </div>
 
