@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '../components/Button'
-import { Badge } from '../components/Badge'
 import { Avatar } from '../components/Avatar'
 import { Checkbox } from '../components/Checkbox'
+import './DashboardPage.css'
 
 type SessionGroup = 'week' | 'earlier'
 
@@ -112,6 +112,8 @@ function ParticipantAvatar({
 export function DashboardPage() {
   const [sessions, setSessions] = useState<Session[]>(BASE_SESSIONS)
   const [activeId, setActiveId] = useState('w1')
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [sendMenuOpen, setSendMenuOpen] = useState(false)
   const [sentMessages, setSentMessages] = useState<Message[]>([])
   const [turnHolder, setTurnHolder] = useState<string>('you')
   const [secondsLeft, setSecondsLeft] = useState(20)
@@ -173,6 +175,7 @@ export function DashboardPage() {
     setIsTyping(false)
     setSecondsLeft(20)
     setTurnHolder('pending')
+    setSendMenuOpen(false)
     scheduleReply()
   }
 
@@ -184,11 +187,14 @@ export function DashboardPage() {
     setDraft('')
     setIsTyping(false)
     setTurnHolder('pending')
+    setSendMenuOpen(false)
     scheduleReply()
   }
 
   function selectSession(id: string) {
     setActiveId(id)
+    setMobileMenuOpen(false)
+    setSendMenuOpen(false)
   }
 
   function newSession() {
@@ -196,6 +202,7 @@ export function DashboardPage() {
     const session: Session = { id, name: 'New session', group: 'week', status: 'Live now', live: true, isNew: true }
     setSessions((s) => [session, ...s])
     setActiveId(id)
+    setMobileMenuOpen(false)
   }
 
   const thisWeek = sessions.filter((s) => s.group === 'week')
@@ -211,8 +218,6 @@ export function DashboardPage() {
         ? `${currentTurnLabel} is typing···`
         : 'Waiting for the next participant'
 
-  const badge = active.group === 'earlier' ? 'Ended' : sessionIsLive ? 'Live' : 'Upcoming'
-  const badgeVariant = badge === 'Live' ? 'info' : 'neutral'
   const subtitle =
     active.group === 'earlier'
       ? 'Anonymous by default'
@@ -220,10 +225,115 @@ export function DashboardPage() {
         ? 'Anonymous by default'
         : `Starts ${active.status} · anonymous by default`
 
+  const sidebarContent = (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ width: 22, height: 22, borderRadius: 'var(--radius-full)', border: '1.5px solid var(--text-primary)' }} />
+        <span style={{ fontSize: 'var(--font-size-md)', fontWeight: 'var(--font-weight-bold)' as unknown as number, color: 'var(--text-primary)' }}>
+          MinCirklen
+        </span>
+      </div>
+      <Button variant="safe" onPress={newSession} style={{ width: '100%' }}>
+        New session
+      </Button>
+      <input
+        placeholder="Search sessions"
+        className="ds-textfield__input"
+        style={{ width: '100%', boxSizing: 'border-box' }}
+      />
+      <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+        {[
+          ['This week', thisWeek],
+          ['Earlier', earlier],
+        ].map(([label, list]) => (
+          <div key={label as string}>
+            <div
+              style={{
+                fontSize: 'var(--font-size-xs)',
+                color: 'var(--text-secondary)',
+                fontWeight: 'var(--font-weight-medium)' as unknown as number,
+                padding: 'var(--space-1) var(--space-2)',
+              }}
+            >
+              {label as string}
+            </div>
+            {(list as Session[]).map((s) => (
+              <div
+                key={s.id}
+                onClick={() => selectSession(s.id)}
+                style={{
+                  cursor: 'pointer',
+                  padding: 'var(--space-2)',
+                  borderRadius: 'var(--radius-md)',
+                  background: s.id === activeId ? 'var(--accent-safe-surface)' : 'transparent',
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 'var(--font-size-sm)',
+                    fontWeight: (s.id === activeId ? 'var(--font-weight-bold)' : 'var(--font-weight-regular)') as unknown as number,
+                    color: 'var(--text-primary)',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                  }}
+                >
+                  {s.name}
+                </div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>{s.status}</div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </>
+  )
+
+  const rightPanelContent = (
+    <>
+      <div>
+        <div style={{ fontSize: 'var(--font-size-sm)', fontWeight: 'var(--font-weight-bold)' as unknown as number, color: 'var(--text-primary)', marginBottom: 'var(--space-2)' }}>
+          Essential pages
+        </div>
+        {['How it works', 'Safety and moderation', 'Account and data'].map((label) => (
+          <a key={label} href="#" style={{ display: 'block', fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)', padding: 'var(--space-2) 0' }}>
+            {label}
+          </a>
+        ))}
+      </div>
+      <div style={{ borderTop: '0.5px solid var(--border-subtle)' }} />
+      <div>
+        <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', marginBottom: 'var(--space-2)' }}>
+          If you're in crisis
+        </div>
+        <a
+          href="#"
+          style={{
+            display: 'block',
+            background: 'var(--signal-urgent-surface)',
+            color: 'var(--signal-urgent)',
+            borderRadius: 'var(--radius-md)',
+            padding: 'var(--space-3) var(--space-3)',
+            fontSize: 'var(--font-size-sm)',
+            fontWeight: 'var(--font-weight-bold)' as unknown as number,
+            marginBottom: 'var(--space-2)',
+            textAlign: 'center',
+          }}
+        >
+          Crisis resources
+        </a>
+        <a href="#" style={{ display: 'block', fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', textAlign: 'center' }}>
+          Report this session
+        </a>
+      </div>
+    </>
+  )
+
   return (
-    <div style={{ display: 'flex', height: '100%', fontFamily: 'var(--font-family-base)', background: 'var(--surface-app)' }}>
+    <div className="dash-root" style={{ display: 'flex', height: '100%', fontFamily: 'var(--font-family-base)', background: 'var(--surface-app)' }}>
       {/* Sidebar */}
       <div
+        className="dash-sidebar"
         style={{
           width: 260,
           flex: 'none',
@@ -235,69 +345,19 @@ export function DashboardPage() {
           background: 'var(--surface-raised)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ width: 22, height: 22, borderRadius: 'var(--radius-full)', border: '1.5px solid var(--text-primary)' }} />
-          <span style={{ fontSize: 'var(--font-size-md)', fontWeight: 'var(--font-weight-bold)' as unknown as number, color: 'var(--text-primary)' }}>
-            MinCirklen
-          </span>
-        </div>
-        <Button variant="safe" onPress={newSession} style={{ width: '100%' }}>
-          New session
-        </Button>
-        <input
-          placeholder="Search sessions"
-          className="ds-textfield__input"
-          style={{ width: '100%', boxSizing: 'border-box' }}
-        />
-        <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          {[
-            ['This week', thisWeek],
-            ['Earlier', earlier],
-          ].map(([label, list]) => (
-            <div key={label as string}>
-              <div
-                style={{
-                  fontSize: 'var(--font-size-xs)',
-                  color: 'var(--text-secondary)',
-                  fontWeight: 'var(--font-weight-medium)' as unknown as number,
-                  padding: 'var(--space-1) var(--space-2)',
-                }}
-              >
-                {label as string}
-              </div>
-              {(list as Session[]).map((s) => (
-                <div
-                  key={s.id}
-                  onClick={() => selectSession(s.id)}
-                  style={{
-                    cursor: 'pointer',
-                    padding: 'var(--space-2)',
-                    borderRadius: 'var(--radius-md)',
-                    background: s.id === activeId ? 'var(--accent-safe-surface)' : 'transparent',
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: 'var(--font-size-sm)',
-                      fontWeight: (s.id === activeId ? 'var(--font-weight-bold)' : 'var(--font-weight-regular)') as unknown as number,
-                      color: 'var(--text-primary)',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                    }}
-                  >
-                    {s.name}
-                  </div>
-                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>{s.status}</div>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
+        {sidebarContent}
+      </div>
+
+      {mobileMenuOpen && <div className="dash-drawer-backdrop" onClick={() => setMobileMenuOpen(false)} />}
+
+      <div className={['dash-drawer', mobileMenuOpen && 'dash-drawer--open'].filter(Boolean).join(' ')}>
+        <div className="dash-drawer__section">{sidebarContent}</div>
+        <div className="dash-drawer__divider" />
+        <div className="dash-drawer__section">{rightPanelContent}</div>
       </div>
 
       {/* Center panel */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      <div className="dash-center" style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         <div
           style={{
             padding: 'var(--space-4) var(--space-6)',
@@ -305,12 +365,24 @@ export function DashboardPage() {
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 'var(--space-3)',
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-            <Badge variant={badgeVariant}>{badge}</Badge>
+            <button
+              type="button"
+              className="dash-mobile-toggle"
+              onClick={() => setMobileMenuOpen((v) => !v)}
+              aria-expanded={mobileMenuOpen}
+              aria-label="Toggle menu"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+              </svg>
+            </button>
             <div>
-              <div style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-bold)' as unknown as number, color: 'var(--text-primary)' }}>
+              <div style={{ fontSize: 'var(--font-size-md)', fontWeight: 'var(--font-weight-bold)' as unknown as number, color: 'var(--text-primary)' }}>
                 {active.name}
               </div>
               <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginTop: 2 }}>{subtitle}</div>
@@ -366,45 +438,79 @@ export function DashboardPage() {
           <span style={{ fontSize: 'var(--font-size-xs)', color: isYourTurn ? 'var(--accent-safe)' : 'var(--text-secondary)', fontWeight: isYourTurn ? ('var(--font-weight-medium)' as unknown as number) : undefined }}>
             {turnStatusText}
           </span>
-          <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', flexWrap: 'wrap' }}>
             <input
               className="ds-textfield__input"
-              style={{ flex: 1, boxSizing: 'border-box' }}
+              style={{ flex: '1 1 160px', boxSizing: 'border-box' }}
               disabled={!isYourTurn}
               value={isYourTurn ? draft : ''}
               onChange={(e) => onDraftChange(e.target.value)}
               placeholder="Share when it's your turn"
             />
-            {isYourTurn && (
-              <>
-                <Checkbox isSelected={autoSendOff} onChange={setAutoSendOff}>
-                  Don't send automatically
-                </Checkbox>
-                <div
-                  title="Time left before auto-send"
-                  style={{
-                    padding: 'var(--space-2) var(--space-3)',
-                    borderRadius: 'var(--radius-sm)',
-                    border: '0.5px solid var(--border-subtle)',
-                    fontSize: 'var(--font-size-sm)',
-                    fontWeight: 'var(--font-weight-bold)' as unknown as number,
-                    color: isTyping ? 'var(--text-secondary)' : 'var(--accent-safe)',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {secondsLeft}s
-                </div>
-              </>
-            )}
-            <Button variant="safe" isDisabled={!isYourTurn} onPress={sendNow}>
-              Send
-            </Button>
+            <div className="dash-composer-actions--desktop">
+              {isYourTurn && (
+                <>
+                  <Checkbox isSelected={autoSendOff} onChange={setAutoSendOff}>
+                    Don't send automatically
+                  </Checkbox>
+                  <div
+                    title="Time left before auto-send"
+                    style={{
+                      padding: 'var(--space-2) var(--space-3)',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '0.5px solid var(--border-subtle)',
+                      fontSize: 'var(--font-size-sm)',
+                      fontWeight: 'var(--font-weight-bold)' as unknown as number,
+                      color: isTyping ? 'var(--text-secondary)' : 'var(--accent-safe)',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {secondsLeft}s
+                  </div>
+                </>
+              )}
+              <Button variant="safe" isDisabled={!isYourTurn} onPress={sendNow}>
+                Send
+              </Button>
+            </div>
+
+            <div className="dash-composer-actions--mobile">
+              <div className="dash-send-split">
+                <button type="button" className="dash-send-split__main" disabled={!isYourTurn} onClick={sendNow}>
+                  Send{isYourTurn ? ` (${secondsLeft}s)` : ''}
+                </button>
+                {isYourTurn && (
+                  <button
+                    type="button"
+                    className="dash-send-split__toggle"
+                    onClick={() => setSendMenuOpen((v) => !v)}
+                    aria-label="Send options"
+                    aria-expanded={sendMenuOpen}
+                  >
+                    <svg width="10" height="6" viewBox="0 0 10 6" fill="none" aria-hidden="true">
+                      <path d="M1 1l4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </button>
+                )}
+                {sendMenuOpen && isYourTurn && (
+                  <div className="dash-send-menu">
+                    <Checkbox isSelected={autoSendOff} onChange={setAutoSendOff}>
+                      Don't send automatically
+                    </Checkbox>
+                  </div>
+                )}
+              </div>
+              {sendMenuOpen && isYourTurn && (
+                <div className="dash-send-backdrop" onClick={() => setSendMenuOpen(false)} />
+              )}
+            </div>
           </div>
         </div>
       </div>
 
       {/* Right panel */}
       <div
+        className="dash-right"
         style={{
           width: 200,
           flex: 'none',
@@ -416,41 +522,7 @@ export function DashboardPage() {
           background: 'var(--surface-raised)',
         }}
       >
-        <div>
-          <div style={{ fontSize: 'var(--font-size-sm)', fontWeight: 'var(--font-weight-bold)' as unknown as number, color: 'var(--text-primary)', marginBottom: 'var(--space-2)' }}>
-            Essential pages
-          </div>
-          {['How it works', 'Safety and moderation', 'Account and data'].map((label) => (
-            <a key={label} href="#" style={{ display: 'block', fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)', padding: 'var(--space-2) 0' }}>
-              {label}
-            </a>
-          ))}
-        </div>
-        <div style={{ borderTop: '0.5px solid var(--border-subtle)' }} />
-        <div>
-          <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', marginBottom: 'var(--space-2)' }}>
-            If you're in crisis
-          </div>
-          <a
-            href="#"
-            style={{
-              display: 'block',
-              background: 'var(--signal-urgent-surface)',
-              color: 'var(--signal-urgent)',
-              borderRadius: 'var(--radius-md)',
-              padding: 'var(--space-3) var(--space-3)',
-              fontSize: 'var(--font-size-sm)',
-              fontWeight: 'var(--font-weight-bold)' as unknown as number,
-              marginBottom: 'var(--space-2)',
-              textAlign: 'center',
-            }}
-          >
-            Crisis resources
-          </a>
-          <a href="#" style={{ display: 'block', fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', textAlign: 'center' }}>
-            Report this session
-          </a>
-        </div>
+        {rightPanelContent}
       </div>
     </div>
   )

@@ -309,6 +309,9 @@ export function NewSessionPage({ onComplete }: NewSessionPageProps) {
                       top: 'calc(100% + 6px)',
                       right: 0,
                       zIndex: 20,
+                      width: 320,
+                      maxWidth: 'calc(100vw - 48px)',
+                      boxSizing: 'border-box',
                       background: 'var(--surface-raised)',
                       border: '1px solid var(--border-strong)',
                       borderRadius: 8,
@@ -318,7 +321,7 @@ export function NewSessionPage({ onComplete }: NewSessionPageProps) {
                       gap: 10,
                     }}
                   >
-                    <div style={{ display: 'flex', gap: 10 }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                         <label style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>Topic</label>
                         <select className="ds-textfield__input" value={filterTopic} onChange={(e) => setFilterTopic(e.target.value)} style={{ boxSizing: 'border-box', fontSize: 'var(--font-size-xs)', height: 34, padding: '0 8px', width: 130 }}>
@@ -338,9 +341,9 @@ export function NewSessionPage({ onComplete }: NewSessionPageProps) {
                         </select>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10 }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 10 }}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                        <DatePicker label="Date" value={filterDate} onChange={setFilterDate} style={{ width: 160 }} />
+                        <DatePicker label="Date" value={filterDate} onChange={setFilterDate} style={{ width: 160, maxWidth: '100%' }} />
                       </div>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                         <label style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>Duration</label>

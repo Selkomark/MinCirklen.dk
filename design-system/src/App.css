@@ -1,0 +1,48 @@
+.ds-appnav {
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-6) 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  box-sizing: border-box;
+}
+
+.ds-appnav__tabs {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  min-width: 0;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.ds-appnav__tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.ds-appnav__tabs > * {
+  flex: none;
+}
+
+.ds-shell-view {
+  flex: 1;
+  min-height: 0;
+}
+
+.ds-shell-view--fixed {
+  overflow: hidden;
+}
+
+.ds-shell-view--scroll {
+  overflow: auto;
+}
+
+@media (max-width: 768px) {
+  .ds-appnav {
+    padding: var(--space-4) var(--space-4) 0;
+  }
+}

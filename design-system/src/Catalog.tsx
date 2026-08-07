@@ -977,6 +977,7 @@ const slugify = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '-')
 
 export function Catalog() {
   const [query, setQuery] = useState('')
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [selected, setSelected] = useState(() => {
     const fromHash = entries.find((e) => slugify(e.name) === window.location.hash.slice(1))
     return fromHash?.name ?? entries[0].name
@@ -993,6 +994,7 @@ export function Catalog() {
 
   const select = (name: string) => {
     setSelected(name)
+    setMobileNavOpen(false)
     history.replaceState(null, '', `#${slugify(name)}`)
   }
 
@@ -1008,34 +1010,51 @@ export function Catalog() {
 
   return (
     <div className="cat-layout">
-      <aside className="cat-nav">
-        <input
-          className="cat-search"
-          placeholder="Search components..."
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        {groupOrder.map((group) => {
-          const items = filtered.filter((e) => e.group === group)
-          if (items.length === 0) return null
-          return (
-            <div key={group} className="cat-nav__group">
-              <div className="cat-nav__group-label">{group}</div>
-              {items.map((item) => (
-                <button
-                  key={item.name}
-                  className={['cat-nav__item', item.name === active?.name && 'cat-nav__item--active']
-                    .filter(Boolean)
-                    .join(' ')}
-                  onClick={() => select(item.name)}
-                >
-                  {item.name}
-                </button>
-              ))}
-            </div>
-          )
-        })}
-      </aside>
+      <div className="cat-mobile-nav-wrap">
+        <button
+          type="button"
+          className="cat-mobile-toggle"
+          onClick={() => setMobileNavOpen((v) => !v)}
+          aria-expanded={mobileNavOpen}
+          aria-controls="cat-nav"
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+          </svg>
+          {active?.name ?? 'Menu'}
+        </button>
+
+        {mobileNavOpen && <div className="cat-mobile-backdrop" onClick={() => setMobileNavOpen(false)} />}
+
+        <aside id="cat-nav" className={['cat-nav', mobileNavOpen && 'cat-nav--open'].filter(Boolean).join(' ')}>
+          <input
+            className="cat-search"
+            placeholder="Search components..."
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {groupOrder.map((group) => {
+            const items = filtered.filter((e) => e.group === group)
+            if (items.length === 0) return null
+            return (
+              <div key={group} className="cat-nav__group">
+                <div className="cat-nav__group-label">{group}</div>
+                {items.map((item) => (
+                  <button
+                    key={item.name}
+                    className={['cat-nav__item', item.name === active?.name && 'cat-nav__item--active']
+                      .filter(Boolean)
+                      .join(' ')}
+                    onClick={() => select(item.name)}
+                  >
+                    {item.name}
+                  </button>
+                ))}
+              </div>
+            )
+          })}
+        </aside>
+      </div>
       <main className="cat-detail">
         {active ? (
           <>

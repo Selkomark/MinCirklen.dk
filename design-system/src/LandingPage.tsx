@@ -64,19 +64,19 @@ export function LandingPage() {
           </Text>
         </div>
         <Row gap={6}>
-          <Col span={4}>
+          <Col span={12} md={4}>
             <Feature icon="🛡" title="Moderated">
               A trained facilitator is present in every session, and you can leave or report at
               any time.
             </Feature>
           </Col>
-          <Col span={4}>
+          <Col span={12} md={4}>
             <Feature icon="🤝" title="Anonymous by default">
               Share as much or as little as you want — nobody sees your real name unless you
               choose to share it.
             </Feature>
           </Col>
-          <Col span={4}>
+          <Col span={12} md={4}>
             <Feature icon="🕊" title="No pressure">
               Listen-only is always welcome. There's no obligation to speak, and no advice-giving
               unless it's asked for.
@@ -90,7 +90,7 @@ export function LandingPage() {
           <Heading level={2}>From people who've been there</Heading>
         </div>
         <Row gap={6}>
-          <Col span={6}>
+          <Col span={12} md={6}>
             <Testimonial
               quote="It helped just knowing someone else understood what I was going through."
               name="Anonymous"
@@ -98,7 +98,7 @@ export function LandingPage() {
               anonymous
             />
           </Col>
-          <Col span={6}>
+          <Col span={12} md={6}>
             <Testimonial
               quote="I almost didn't join because I was nervous. The facilitator made it feel safe within minutes."
               name="Anonymous"
@@ -114,7 +114,7 @@ export function LandingPage() {
           <Heading level={2}>Simple, honest pricing</Heading>
         </div>
         <Row gap={6}>
-          <Col span={6}>
+          <Col span={12} md={6}>
             <PricingCard
               name="Community"
               price="Free"
@@ -126,7 +126,7 @@ export function LandingPage() {
               }
             />
           </Col>
-          <Col span={6}>
+          <Col span={12} md={6}>
             <PricingCard
               name="Facilitator"
               price="$29"
