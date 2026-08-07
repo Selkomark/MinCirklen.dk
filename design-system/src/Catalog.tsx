@@ -20,6 +20,7 @@ import { Accordion, AccordionItem } from './components/Accordion'
 import { Menu, MenuItem } from './components/Menu'
 import { Calendar } from './components/Calendar'
 import { DatePicker } from './components/DatePicker'
+import { TimePicker } from './components/TimePicker'
 import { ColorPicker } from './components/ColorPicker'
 import { CodeEditor } from './components/CodeEditor'
 import { Container } from './components/Container'
@@ -332,6 +333,17 @@ const entries: CatalogEntry[] = [
       { name: 'value / defaultValue', type: 'CalendarDate', description: 'Controlled / uncontrolled selected date.' },
     ],
     code: `<DatePicker label="Session date" />`,
+  },
+  {
+    name: 'TimePicker',
+    group: 'Forms',
+    description: 'Segmented time entry (hour / minute / AM-PM).',
+    render: () => <TimePicker label="Session time" />,
+    props: [
+      { name: 'label', type: 'string', description: 'Field label.' },
+      { name: 'value / defaultValue', type: 'Time', description: 'Controlled / uncontrolled selected time (from @internationalized/date).' },
+    ],
+    code: `<TimePicker label="Session time" />`,
   },
   {
     name: 'ColorPicker',

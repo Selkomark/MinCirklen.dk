@@ -53,7 +53,7 @@ function Shell() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <Nav view={view} setView={setView} />
-      <div style={{ flex: 1, minHeight: 0, overflow: view === 'dashboard' ? 'hidden' : 'auto' }}>
+      <div style={{ flex: 1, minHeight: 0, overflow: view === 'dashboard' || view === 'catalog' ? 'hidden' : 'auto' }}>
         {view === 'catalog' && <Catalog />}
         {view === 'landing' && <LandingPage />}
         {view === 'dashboard' && <DashboardPage />}
