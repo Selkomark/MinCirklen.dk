@@ -225,7 +225,7 @@ export function DashboardPage() {
         ? 'Anonymous by default'
         : `Starts ${active.status} · anonymous by default`
 
-  const sidebarContent = (
+  const sidebarHeader = (
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ width: 22, height: 22, borderRadius: 'var(--radius-full)', border: '1.5px solid var(--text-primary)' }} />
@@ -241,51 +241,61 @@ export function DashboardPage() {
         className="ds-textfield__input"
         style={{ width: '100%', boxSizing: 'border-box' }}
       />
-      <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-        {[
-          ['This week', thisWeek],
-          ['Earlier', earlier],
-        ].map(([label, list]) => (
-          <div key={label as string}>
+    </>
+  )
+
+  const sidebarList = (
+    <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+      {[
+        ['This week', thisWeek],
+        ['Earlier', earlier],
+      ].map(([label, list]) => (
+        <div key={label as string}>
+          <div
+            style={{
+              fontSize: 'var(--font-size-xs)',
+              color: 'var(--text-secondary)',
+              fontWeight: 'var(--font-weight-medium)' as unknown as number,
+              padding: 'var(--space-1) var(--space-2)',
+            }}
+          >
+            {label as string}
+          </div>
+          {(list as Session[]).map((s) => (
             <div
+              key={s.id}
+              onClick={() => selectSession(s.id)}
               style={{
-                fontSize: 'var(--font-size-xs)',
-                color: 'var(--text-secondary)',
-                fontWeight: 'var(--font-weight-medium)' as unknown as number,
-                padding: 'var(--space-1) var(--space-2)',
+                cursor: 'pointer',
+                padding: 'var(--space-2)',
+                borderRadius: 'var(--radius-md)',
+                background: s.id === activeId ? 'var(--accent-safe-surface)' : 'transparent',
               }}
             >
-              {label as string}
-            </div>
-            {(list as Session[]).map((s) => (
               <div
-                key={s.id}
-                onClick={() => selectSession(s.id)}
                 style={{
-                  cursor: 'pointer',
-                  padding: 'var(--space-2)',
-                  borderRadius: 'var(--radius-md)',
-                  background: s.id === activeId ? 'var(--accent-safe-surface)' : 'transparent',
+                  fontSize: 'var(--font-size-sm)',
+                  fontWeight: (s.id === activeId ? 'var(--font-weight-bold)' : 'var(--font-weight-regular)') as unknown as number,
+                  color: 'var(--text-primary)',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
                 }}
               >
-                <div
-                  style={{
-                    fontSize: 'var(--font-size-sm)',
-                    fontWeight: (s.id === activeId ? 'var(--font-weight-bold)' : 'var(--font-weight-regular)') as unknown as number,
-                    color: 'var(--text-primary)',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                  }}
-                >
-                  {s.name}
-                </div>
-                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>{s.status}</div>
+                {s.name}
               </div>
-            ))}
-          </div>
-        ))}
-      </div>
+              <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>{s.status}</div>
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+
+  const sidebarContent = (
+    <>
+      {sidebarHeader}
+      {sidebarList}
     </>
   )
 
@@ -351,9 +361,9 @@ export function DashboardPage() {
       {mobileMenuOpen && <div className="dash-drawer-backdrop" onClick={() => setMobileMenuOpen(false)} />}
 
       <div className={['dash-drawer', mobileMenuOpen && 'dash-drawer--open'].filter(Boolean).join(' ')}>
-        <div className="dash-drawer__section">{sidebarContent}</div>
-        <div className="dash-drawer__divider" />
-        <div className="dash-drawer__section">{rightPanelContent}</div>
+        <div className="dash-drawer__header">{sidebarHeader}</div>
+        <div className="dash-drawer__list">{sidebarList}</div>
+        <div className="dash-drawer__footer">{rightPanelContent}</div>
       </div>
 
       {/* Center panel */}
