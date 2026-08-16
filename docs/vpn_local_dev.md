@@ -107,6 +107,30 @@ them.
 Once connected, `https://dev-mincirklen.dk` on your phone works exactly
 like it does on your Mac.
 
+## The Docker Desktop hairpin problem (and why there's a DNAT fix)
+
+Even with the Device field correct, tunneled HTTPS requests to
+`dev-mincirklen.dk` stalled after the TLS handshake — DNS worked, general
+internet through the tunnel worked, but reaching Caddy specifically didn't.
+The difference: general internet traffic genuinely leaves the Mac and comes
+back: a normal, well-supported NAT path. Traffic to `dev-mincirklen.dk`
+resolves to this Mac's own LAN IP, so it has to "hairpin" — leave the `vpn`
+container, traverse Docker Desktop's virtualized networking back to the
+Mac's own network stack, and arrive at a port the same Mac already
+publishes. That loop turned out to be unreliable in practice under Docker
+Desktop for macOS specifically (confirmed with an isolated container client
+dialing the tunnel's real public endpoint directly — no phone, no carrier,
+no Wi-Fi involved — reproducing the exact same stall).
+
+The fix, since `vpn` and `caddy` already sit on the same Docker network:
+instead of letting that traffic hairpin through the host, redirect it
+straight to Caddy's container IP with a DNAT rule. `./setup-local-vpn.sh`
+installs this automatically (as a wg-easy "hook" stored in its own
+database, so it's regenerated correctly every time the interface restarts
+— not a one-off manual patch). If you ever wipe the `vpn` service's data
+volume (`docker compose down -v` or similar) and start fresh, just re-run
+`./setup-local-vpn.sh` to reinstall it.
+
 ## Why some of this is the way it is
 
 - **`dns` is bound to all interfaces, not just `127.0.0.1`**: a tunneled
@@ -153,6 +177,23 @@ database and the container restarted to pick it up cleanly:
 docker compose exec vpn sh -c "apk add --no-cache sqlite >/dev/null 2>&1; \
   sqlite3 /etc/wireguard/wg-easy.db \"UPDATE interfaces_table SET device='eth0' WHERE name='wg0';\""
 docker compose up -d --force-recreate vpn
+```
+
+If the Device field is correct (`eth0`) and DNS/general-internet-through-the-
+tunnel both work, but HTTPS to `dev-mincirklen.dk` specifically stalls after
+the TLS handshake starts — that's the
+[Docker Desktop hairpin problem](#the-docker-desktop-hairpin-problem-and-why-theres-a-dnat-fix)
+above, not the Device-field bug. Check whether the DNAT fix is actually
+installed and being used:
+
+```
+docker compose exec vpn iptables -t nat -L PREROUTING -n -v
+# Should show two DNAT rules (tcp dpt:443 and dpt:80) targeting Caddy's
+# container IP. If they're missing, re-run ./setup-local-vpn.sh to
+# reinstall them. If they're there but show "0 packets" while you're
+# actively testing, the rule isn't matching — check that the destination
+# IP in the rule still matches your current LAN IP (re-run
+# ./setup-local-vpn.sh if your LAN IP has changed since it was installed).
 ```
 
 Other things worth checking, in rough order of likelihood:

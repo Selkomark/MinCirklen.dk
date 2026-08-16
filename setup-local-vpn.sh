@@ -12,11 +12,22 @@
 # the admin account and WireGuard endpoint/DNS settings are configured
 # through a web setup wizard on first visit. This script just starts the
 # container (profile-gated, so this is the only thing that starts it — a
-# plain `docker compose up -d` never touches it) and walks you through the
-# rest.
+# plain `docker compose up -d` never touches it), installs a DNAT fix
+# (below) so tunneled clients can actually reach Caddy, and walks you
+# through the rest.
 #
-# Safe to re-run: if the vpn service is already up, this just re-prints the
-# next steps.
+# Why the DNAT fix: a tunneled client's traffic for dev-mincirklen.dk is
+# forwarded by the `vpn` container back out to this Mac's own LAN IP —
+# a "hairpin" through Docker Desktop's virtualized networking that turned
+# out to be unreliable in practice (DNS and small requests worked, but
+# HTTPS to Caddy consistently stalled after the TLS handshake). `vpn` and
+# `caddy` are already on the same Docker network, so instead of hairpinning
+# through the host, this rewrites the destination straight to Caddy's
+# container IP — bypassing the flaky path entirely. See
+# docs/vpn_local_dev.md for the full story.
+#
+# Safe to re-run: if the vpn service is already up, this reapplies the DNAT
+# fix (e.g. after your LAN IP changes) and re-prints the next steps.
 
 set -euo pipefail
 
@@ -46,6 +57,31 @@ fi
 
 log "Starting the vpn service."
 docker compose -f "${REPO_ROOT}/docker-compose.yml" up -d vpn
+
+# --- Install the DNAT fix (see comment at the top of this file) ---
+# wg-easy's own DB template mechanism (hooks_table) is used so this survives
+# wg-easy regenerating wg0.conf on its own — it's not a one-off live patch.
+
+log "Waiting for the vpn service's database to be ready..."
+for _ in $(seq 1 15); do
+  if docker exec mincirklen-vpn sh -c 'test -f /etc/wireguard/wg-easy.db' >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+docker exec mincirklen-vpn sh -c 'command -v sqlite3 >/dev/null 2>&1 || apk add --no-cache sqlite >/dev/null 2>&1'
+
+HOOKS_SQL_TEMPLATE='UPDATE hooks_table SET
+  post_up = '"'"'iptables -t nat -A POSTROUTING -s {{ipv4Cidr}} -o {{device}} -j MASQUERADE; iptables -A INPUT -p udp -m udp --dport {{port}} -j ACCEPT; iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; ip6tables -t nat -A POSTROUTING -s {{ipv6Cidr}} -o {{device}} -j MASQUERADE; ip6tables -A INPUT -p udp -m udp --dport {{port}} -j ACCEPT; ip6tables -A FORWARD -i wg0 -j ACCEPT; ip6tables -A FORWARD -o wg0 -j ACCEPT; CADDY_IP=$(getent hosts caddy | cut -f1 -d" "); iptables -t nat -A PREROUTING -i wg0 -p tcp -d __LAN_IP__ --dport 443 -j DNAT --to-destination ${CADDY_IP}:443; iptables -t nat -A PREROUTING -i wg0 -p tcp -d __LAN_IP__ --dport 80 -j DNAT --to-destination ${CADDY_IP}:80;'"'"',
+  post_down = '"'"'iptables -t nat -D POSTROUTING -s {{ipv4Cidr}} -o {{device}} -j MASQUERADE; iptables -D INPUT -p udp -m udp --dport {{port}} -j ACCEPT; iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; ip6tables -t nat -D POSTROUTING -s {{ipv6Cidr}} -o {{device}} -j MASQUERADE; ip6tables -D INPUT -p udp -m udp --dport {{port}} -j ACCEPT; ip6tables -D FORWARD -i wg0 -j ACCEPT; ip6tables -D FORWARD -o wg0 -j ACCEPT; CADDY_IP=$(getent hosts caddy | cut -f1 -d" "); iptables -t nat -D PREROUTING -i wg0 -p tcp -d __LAN_IP__ --dport 443 -j DNAT --to-destination ${CADDY_IP}:443; iptables -t nat -D PREROUTING -i wg0 -p tcp -d __LAN_IP__ --dport 80 -j DNAT --to-destination ${CADDY_IP}:80;'"'"'
+WHERE id='"'"'wg0'"'"';'
+
+HOOKS_SQL="${HOOKS_SQL_TEMPLATE//__LAN_IP__/${LAN_IP}}"
+echo "$HOOKS_SQL" | docker exec -i mincirklen-vpn sh -c 'sqlite3 /etc/wireguard/wg-easy.db'
+
+log "Applying the DNAT fix (recreating the vpn container so it takes effect)."
+docker compose -f "${REPO_ROOT}/docker-compose.yml" up -d --force-recreate vpn >/dev/null
 
 cat <<EOF
 
