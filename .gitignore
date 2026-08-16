@@ -1,0 +1,10 @@
+# Dependencies and build output
+node_modules/
+dist/
+dist-docs/
+
+# Locally-generated TLS certs/keys (./setup-local-certs.sh) — machine-specific,
+# signed by that machine's own mkcert CA. Never commit private key material.
+local-infra/caddy/certs/
+
+.DS_Store

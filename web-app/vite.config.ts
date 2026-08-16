@@ -10,5 +10,9 @@ export default defineConfig(({ command }) => ({
   server: {
     port: 5190,
     strictPort: true,
+    // Vite's dev-server host check (anti DNS-rebinding) otherwise rejects
+    // requests proxied through Caddy under the local dev-mincirklen.dk
+    // domain (docker-compose.yml + infra/caddy/Caddyfile) with a 403.
+    allowedHosts: ['dev-mincirklen.dk'],
   },
 }))

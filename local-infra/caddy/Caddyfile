@@ -1,0 +1,31 @@
+# Local host-based routing for dev-mincirklen.dk, mirroring the cloud HTTPS
+# Load Balancer's host-based routing (IaC/environments/prod) at a scale
+# that works on a laptop. Bound directly to host ports 80/443 via
+# docker-compose.yml's caddy service, so URLs need no port suffix — this
+# means no other local project can bind 80/443 while this stack is up.
+#
+# auto_https is off because dev-mincirklen.dk isn't a real public domain —
+# ACME can't reach it. TLS instead uses a cert from ./setup-local-certs.sh
+# (mkcert), mounted read-only into /certs.
+{
+	auto_https off
+}
+
+https://dev-mincirklen.dk {
+	tls /certs/dev-mincirklen.dk.pem /certs/dev-mincirklen.dk-key.pem
+	reverse_proxy web-app:5190
+}
+
+https://trpc.dev-mincirklen.dk {
+	tls /certs/dev-mincirklen.dk.pem /certs/dev-mincirklen.dk-key.pem
+	reverse_proxy trpc-api:8787
+}
+
+https://socket.dev-mincirklen.dk {
+	tls /certs/dev-mincirklen.dk.pem /certs/dev-mincirklen.dk-key.pem
+	reverse_proxy websocket-service:8080
+}
+
+http://dev-mincirklen.dk, http://trpc.dev-mincirklen.dk, http://socket.dev-mincirklen.dk {
+	redir https://{host}{uri} permanent
+}

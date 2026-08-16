@@ -1,0 +1,166 @@
+# Local end-to-end dev stack — mirrors IaC/environments/prod's architecture
+# (Cloud SQL -> postgres, Memorystore -> redis, Pub/Sub-ish fanout -> nats,
+# the three Cloud Run/GKE services, Caddy standing in for the HTTPS LB) so
+# the whole thing runs offline on a laptop. Every app service here uses its
+# dev.Dockerfile with source bind-mounted for live reload — see each
+# service's prod.Dockerfile for what actually ships.
+#
+# Entirely self-contained to this repo — the dns service and Caddy both
+# bind standard ports (53, 80, 443) directly, so nothing here depends on or
+# touches any other project's containers. That means this stack and any
+# other project binding the same ports can't run at the same time; stop
+# the other one first if you hit a port conflict.
+#
+# Usage: docker compose up -d
+# Then visit https://dev-mincirklen.dk (after running ./setup-local-dns.sh
+# and ./setup-local-certs.sh — see docs/LOCAL_DEV.md)
+
+services:
+  dns:
+    image: strm/dnsmasq
+    container_name: mincirklen-dns
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - '127.0.0.1:53:53/udp'
+      - '127.0.0.1:53:53/tcp'
+    volumes:
+      - ./local-infra/dns/dnsmasq.conf:/etc/dnsmasq.conf
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: mincirklen-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mincirklen
+      POSTGRES_PASSWORD: mincirklen
+      POSTGRES_DB: mincirklen
+    ports:
+      - '5433:5432'
+    volumes:
+      - mincirklen-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U mincirklen']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: mincirklen-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - mincirklen-redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: mincirklen-nats
+    restart: unless-stopped
+    command: ['-js', '-m', '8222']
+    ports:
+      - '4222:4222'
+      - '8222:8222'
+    volumes:
+      - mincirklen-nats-data:/data
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:8222/healthz']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  trpc-api:
+    build:
+      context: services/trpc-api
+      dockerfile: dev.Dockerfile
+    container_name: mincirklen-trpc-api
+    restart: unless-stopped
+    environment:
+      PORT: '8787'
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      DATABASE_URL: postgres://mincirklen:mincirklen@postgres:5432/mincirklen
+      MODERATION_SVC_URL: http://moderation-service:8082
+    ports:
+      - '8787:8787'
+    volumes:
+      - ./services/trpc-api/src:/app/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  websocket-service:
+    build:
+      context: services/websocket-service
+      dockerfile: dev.Dockerfile
+    container_name: mincirklen-websocket-service
+    restart: unless-stopped
+    environment:
+      PORT: '8080'
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      NATS_URL: nats://nats:4222
+    ports:
+      - '8091:8080'
+    volumes:
+      - ./services/websocket-service/src:/app/src
+    depends_on:
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
+  moderation-service:
+    build:
+      context: services/moderation-service
+      dockerfile: dev.Dockerfile
+    container_name: mincirklen-moderation-service
+    restart: unless-stopped
+    environment:
+      PORT: '8082'
+    # Not published to the host — mirrors the cloud architecture, where
+    # moderation-service is never public and is only reached service-to-service.
+    volumes:
+      - ./services/moderation-service/src:/app/src
+
+  web-app:
+    build:
+      context: web-app
+      dockerfile: dev.Dockerfile
+    container_name: mincirklen-web-app
+    restart: unless-stopped
+    ports:
+      - '5190:5190'
+    volumes:
+      - ./web-app:/app
+      - mincirklen-web-app-node-modules:/app/node_modules
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: mincirklen-caddy
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./local-infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./local-infra/caddy/certs:/certs:ro
+    depends_on:
+      - trpc-api
+      - websocket-service
+      - web-app
+
+volumes:
+  mincirklen-postgres-data:
+  mincirklen-redis-data:
+  mincirklen-nats-data:
+  mincirklen-web-app-node-modules:
