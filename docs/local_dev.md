@@ -46,6 +46,17 @@ machine-specific, signed by that machine's own local CA).
 Both scripts are safe to re-run and neither runs itself — you run them,
 once, per machine.
 
+If Caddy crash-loops with `permission denied` reading the key file — this
+happens if `setup-local-certs.sh` ever got run with `sudo` by mistake,
+which leaves the cert/key owned by `root` and unreadable by Docker
+Desktop's file-sharing daemon (which runs as your normal user) — fix just
+the ownership/permissions, isolated from the rest of the script so it
+won't regenerate certs or touch mkcert:
+
+```
+sudo ./setup-local-certs.sh --fix-permissions
+```
+
 ## Every day
 
 ```
@@ -77,22 +88,53 @@ Or skip DNS entirely and hit containers directly on the host:
 the cloud setup where it's never publicly reachable — only other containers
 on the compose network can reach it.
 
+## Remote access via VPN (optional)
+
+To reach `https://dev-mincirklen.dk` from a phone or laptop off your LAN
+(e.g. working from a coffee shop or traveling), an optional `vpn` service
+(WireGuard, via [wg-easy](https://github.com/wg-easy/wg-easy)) is included
+in `docker-compose.yml`. It's gated behind a Compose profile, so it never
+starts as part of a normal `docker compose up -d`/`down` — only via
+`docker compose up -d vpn` or the setup script below.
+
+```
+./setup-local-dns.sh   # if you haven't already
+./setup-local-vpn.sh
+```
+
+`setup-local-vpn.sh` detects your Mac's LAN IP and starts the `vpn` service, then
+walks you through the rest — wg-easy v15 has no environment-variable setup,
+so the admin account and WireGuard endpoint/DNS settings are configured
+through a one-time web setup wizard at `http://<your-LAN-IP>:51821/`
+instead (nothing secret lands in this repo). You'll need a stable public
+hostname for the endpoint — set up a free dynamic-DNS hostname like
+[DuckDNS](https://www.duckdns.org) first if your home IP isn't static.
+After the wizard: forward a UDP port on your router, add your phone as a
+peer via the admin UI (QR code), and trust this machine's mkcert root CA on
+the phone so HTTPS doesn't warn.
+
+Note this changes how `dev-mincirklen.dk` resolves even without the VPN
+active: `setup-local-dns.sh` answers with your Mac's current LAN IP rather
+than `127.0.0.1` (a loopback answer would be useless to a remote client),
+and `dns`/`caddy` are bound to all interfaces rather than `127.0.0.1` only.
+See `SECURITY.md` for the trust-boundary implications.
+
 ## Live reload
 
 Every app service (`web-app`, `trpc-api`, `websocket-service`,
 `moderation-service`) builds from its `dev.Dockerfile`, which installs
 dependencies only and expects the source to be bind-mounted — see the
 `volumes:` entries in `docker-compose.yml`. Editing any file under
-`services/*/src` or `web-app/` restarts/hot-reloads that service's process
-inside the container; you don't need to rebuild the image for source
-changes. A rebuild (`docker compose up -d --build`) is only needed after
-changing a `package.json`/lockfile.
+`services/*/src` restarts/hot-reloads that service's process inside the
+container; you don't need to rebuild the image for source changes. A
+rebuild (`docker compose up -d --build`) is only needed after changing a
+`package.json`/lockfile.
 
 `prod.Dockerfile` in each service is the other half: it copies the source
 in and builds the production artifact, matching what actually gets pushed
 and deployed per `IaC/`. It's not used by `docker-compose.yml` at all —
 it's there to be built and tested standalone, e.g. `docker build -f
-web-app/prod.Dockerfile -t mincirklen-web-app:prod web-app`.
+services/web-app/prod.Dockerfile -t mincirklen-web-app:prod services/web-app`.
 
 ## Tearing down
 

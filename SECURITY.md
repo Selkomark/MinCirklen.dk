@@ -126,8 +126,13 @@ a convenience summary):
   they never land in state) — they're added out-of-band via
   `gcloud secrets versions add`.
 - Local dev (`docker-compose.yml`) uses a throwaway Postgres password
-  (`mincirklen`/`mincirklen`) bound to `127.0.0.1` only — not a real
-  credential, never reachable outside a developer's own machine.
+  (`mincirklen`/`mincirklen`) — not a real credential. Note it's *not*
+  restricted to `127.0.0.1`: like most services in the stack (Redis, NATS,
+  trpc-api, websocket-service, web-app, Caddy, and now `dns`), it publishes
+  on all interfaces, so it's reachable by anything on the same LAN as the
+  developer's machine — acceptable given the throwaway credential and the
+  local-only nature of the data, but not literally "never reachable outside
+  a developer's own machine."
 
 ## Repository security features
 
@@ -159,6 +164,39 @@ public repo otherwise.
 
 ## Local development
 
-See `docs/LOCAL_DEV.md`. The local Docker Compose stack, DNS, and TLS
-setup are entirely offline and self-contained to a developer's own
-machine — no bearing on production security.
+See `docs/local_dev.md`. The local Docker Compose stack, DNS, and TLS
+setup are self-contained to this repo (no dependency on or interference
+with any other project) and have no bearing on production security — none
+of it touches GCP/Terraform/GitHub Actions credentials. It is *not*,
+however, strictly offline/loopback-only — see above and below.
+
+### Optional VPN (`vpn` service)
+
+`docker-compose.yml` includes an optional, profile-gated WireGuard service
+(`ghcr.io/wg-easy/wg-easy`, pinned by digest) so a developer can reach
+`dev-mincirklen.dk` from a phone or laptop off their LAN. It never starts
+via a plain `docker compose up -d`/`down` — only via explicit
+`docker compose up -d vpn` or `./setup-local-vpn.sh`. See `docs/vpn_local_dev.md`
+for full setup instructions, including a gotcha in the admin UI that can
+silently break it (an easy mistake to make, not a security issue, but
+worth knowing about before you hit it).
+
+- **Image trust**: `wg-easy/wg-easy` is a widely-used (26k+ GitHub stars),
+  actively-maintained community project — the de-facto standard WireGuard
+  container with a web admin UI. Not a Docker Hub "official" image (same
+  as `strm/dnsmasq`, already used for `dns`), but vetted per
+  `.claude/skills/security-guard` and pinned by digest rather than a
+  mutable tag.
+- **New network exposure**: enabling this requires forwarding a UDP port
+  on the developer's home router to their machine, and widening `dns` from
+  `127.0.0.1`-only to all interfaces so a tunneled client can resolve
+  `dev-mincirklen.dk`. The forwarded port only accepts WireGuard's
+  cryptographic handshake — a peer needs a provisioned key (via the admin
+  UI, not guessable) to get anywhere; an open UDP port alone grants no
+  access.
+- **Admin UI**: wg-easy v15 has no environment-variable setup — the admin
+  account is created through a one-time web setup wizard on first visit
+  (`http://<LAN-IP>:51821/setup/1`). No secret material for this service
+  ever lands in this repo.
+- This is entirely opt-in, per-developer, home-network infrastructure. It
+  has no bearing on production security or CI/CD.

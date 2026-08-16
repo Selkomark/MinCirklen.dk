@@ -11,9 +11,13 @@
 # other project binding the same ports can't run at the same time; stop
 # the other one first if you hit a port conflict.
 #
+# dns and caddy are bound to all interfaces (not just 127.0.0.1) so devices
+# on your LAN — or the optional `vpn` service below — can reach them, not
+# just this machine. See ./setup-local-vpn.sh and docs/local_dev.md.
+#
 # Usage: docker compose up -d
 # Then visit https://dev-mincirklen.dk (after running ./setup-local-dns.sh
-# and ./setup-local-certs.sh — see docs/LOCAL_DEV.md)
+# and ./setup-local-certs.sh — see docs/local_dev.md)
 
 services:
   dns:
@@ -23,8 +27,8 @@ services:
     cap_add:
       - NET_ADMIN
     ports:
-      - '127.0.0.1:53:53/udp'
-      - '127.0.0.1:53:53/tcp'
+      - '53:53/udp'
+      - '53:53/tcp'
     volumes:
       - ./local-infra/dns/dnsmasq.conf:/etc/dnsmasq.conf
 
@@ -134,14 +138,14 @@ services:
 
   web-app:
     build:
-      context: web-app
+      context: services/web-app
       dockerfile: dev.Dockerfile
     container_name: mincirklen-web-app
     restart: unless-stopped
     ports:
       - '5190:5190'
     volumes:
-      - ./web-app:/app
+      - ./services/web-app:/app
       - mincirklen-web-app-node-modules:/app/node_modules
 
   caddy:
@@ -159,8 +163,57 @@ services:
       - websocket-service
       - web-app
 
+  # Optional: WireGuard VPN so a phone/laptop off your LAN can tunnel in and
+  # reach dev-mincirklen.dk. Gated behind a profile so it never starts as
+  # part of a normal `docker compose up -d` / `down` — only via explicit
+  # `docker compose up -d vpn` (what ./setup-local-vpn.sh does). Admin account and
+  # WireGuard endpoint/DNS are set via a one-time web setup wizard on first
+  # visit, not env vars. See docs/local_dev.md and SECURITY.md.
+  vpn:
+    image: ghcr.io/wg-easy/wg-easy@sha256:0e7bc9d34e86ddcaa92bc700d4d7dc9b33291dbc07ac8d13382f7c2095f949ec # v15.4.0
+    container_name: mincirklen-vpn
+    restart: unless-stopped
+    profiles:
+      - vpn
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      # We deliberately never put TLS in front of the admin UI (it's only
+      # ever reachable over LAN or through the VPN tunnel itself, never the
+      # raw internet — see SECURITY.md). Without this, wg-easy marks its
+      # session cookie Secure and browsers silently drop it over plain
+      # http://, so login appears to "not work" even with correct
+      # credentials (the server-side session is created — check `docker
+      # compose logs vpn` — it just never survives client-side).
+      INSECURE: 'true'
+    ports:
+      # WireGuard listens on UDP 443 instead of the default 51820 — some
+      # mobile carriers/middleboxes are more lenient with 443 (indistinguishable
+      # from QUIC/HTTP3). No conflict with Caddy's TCP 443 below — UDP and TCP
+      # are independent port spaces. This wasn't actually required to fix the
+      # connectivity issue found during setup (see docs/vpn_local_dev.md), but
+      # is a reasonable default to keep. The interface's listening port must
+      # also be changed to 443 in the wg-easy admin UI (Settings > wg0) for
+      # this to take effect.
+      #
+      # IMPORTANT: changing the port that way also has a UI field labeled
+      # "Device" right next to it — leave it as `eth0`. Changing it to `wg0`
+      # (an easy mistake, since the port field is for the *WireGuard*
+      # interface) silently breaks NAT for all forwarded traffic — the
+      # handshake still succeeds but nothing else works. See
+      # docs/vpn_local_dev.md for the full story and the fix if it happens.
+      - '443:443/udp'
+      - '51821:51821/tcp'
+    volumes:
+      - mincirklen-vpn-data:/etc/wireguard
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+
 volumes:
   mincirklen-postgres-data:
   mincirklen-redis-data:
   mincirklen-nats-data:
   mincirklen-web-app-node-modules:
+  mincirklen-vpn-data:
