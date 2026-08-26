@@ -1,0 +1,50 @@
+# Charter
+
+*"Make a safe and cosy place on the internet where people can finally
+open up and improve their mental health."*
+
+This is a constraint, not a feature backlog. Any product decision that
+conflicts with the principles below is a bug, not a trade-off to
+negotiate. Full rationale and detail lives in `docs/roadmap.md` and
+`docs/tech_spec.md` — this page is the one-page version that has to hold
+up on its own.
+
+## 1. No directory, no search, no lookup
+
+This is not a dating platform, a directory, or a social network. No
+profiles to browse, no search, no way to look someone up. If a feature
+makes it easier to find or contact a specific person, it does not ship.
+
+## 2. No solicitation, no out-of-session contact
+
+No user may use the platform to solicit, advertise, recruit, defraud, or
+make contact with another user outside the structured session. Any
+mechanism for exchanging contact details inside a session is either
+blocked or heavily throttled and flagged.
+
+## 3. Deterministic crisis escalation
+
+Crisis disclosures (self-harm, suicidal ideation, harm to others) always
+trigger an immediate, deterministic safety response — a resource card
+and a human escalation path — regardless of what the AI model "decides."
+This path must never depend solely on a single model's discretion, and
+it must never have a conditional bypass anywhere in the call chain.
+
+## 4. Anonymity by default
+
+Real names, contact info, and precise location are never required.
+Anyone who wants to add identity later opts in explicitly, and only that
+person's own group ever sees it — never a public profile.
+
+## 5. Radical transparency as a safety mechanism
+
+Published moderation policy, published incident/transparency reports,
+and gated independent verification of the moderation source for vetted
+safety partners. (The moderation service's source itself is not publicly
+open-sourced — see `docs/roadmap.md` Addendum D for why, and for the
+gated-access mechanism that replaces full open-sourcing.)
+
+---
+
+A PR that violates any of the above is broken, not a trade-off to
+negotiate — treat it the way you'd treat a failing test.

@@ -1,0 +1,326 @@
+# Local end-to-end dev stack — mirrors IaC/environments/prod's architecture
+# (Cloud SQL -> postgres, Memorystore -> redis, Pub/Sub-ish fanout -> nats,
+# the three Cloud Run/GKE services, Caddy standing in for the HTTPS LB) so
+# the whole thing runs offline on a laptop. Every app service here uses its
+# dev.Dockerfile with source bind-mounted for live reload — see each
+# service's prod.Dockerfile for what actually ships.
+#
+# Entirely self-contained to this repo — the dns service and Caddy both
+# bind standard ports (53, 80, 443) directly, so nothing here depends on or
+# touches any other project's containers. That means this stack and any
+# other project binding the same ports can't run at the same time; stop
+# the other one first if you hit a port conflict.
+#
+# dns and caddy are bound to all interfaces (not just 127.0.0.1) so devices
+# on your LAN — or the optional `vpn` service below — can reach them, not
+# just this machine. See ./setup-local-vpn.sh and docs/local_dev.md.
+#
+# Usage: docker compose up -d
+# Then visit https://dev-mincirklen.dk (after running ./setup-local-dns.sh
+# and ./setup-local-certs.sh — see docs/local_dev.md)
+
+services:
+  dns:
+    image: strm/dnsmasq
+    container_name: mincirklen-dns
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - '53:53/udp'
+      - '53:53/tcp'
+    volumes:
+      - ./local-infra/dns/dnsmasq.conf:/etc/dnsmasq.conf
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: mincirklen-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mincirklen
+      POSTGRES_PASSWORD: mincirklen
+      POSTGRES_DB: mincirklen
+    ports:
+      - '5433:5432'
+    volumes:
+      - mincirklen-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U mincirklen']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: mincirklen-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - mincirklen-redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: mincirklen-nats
+    restart: unless-stopped
+    command: ['-js', '-m', '8222']
+    ports:
+      - '4222:4222'
+      - '8222:8222'
+    volumes:
+      - mincirklen-nats-data:/data
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:8222/healthz']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Local stand-in for a cloud KMS (e.g. GCP Cloud KMS in production) —
+  # trpc-api calls its Transit engine to encrypt/decrypt user_profiles PII
+  # instead of holding a raw symmetric key in an env var. Dev mode only:
+  # in-memory storage, auto-unsealed, fixed root token — everything it
+  # holds is lost on restart. See SECURITY.md "Local KMS emulator".
+  vault:
+    image: hashicorp/vault@sha256:750bb37c1638fa194ab37053a81618c61bb0491ddec6fccac87c07a8e6cd8166 # 1.18
+    container_name: mincirklen-vault
+    restart: unless-stopped
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: dev-only-not-for-production
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+      VAULT_ADDR: http://127.0.0.1:8200
+    healthcheck:
+      test: ['CMD', 'vault', 'status']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - '8200:8200'
+    # Published to the host, like postgres/redis/nats, so integration
+    # tests running via `bun test` on the host (not in a container) can
+    # reach it directly — not routed through Caddy, same posture as those.
+
+  # One-shot: enables the Transit engine and creates the PII encryption key.
+  # Re-runs (and no-ops on the already-enabled engine) every time `vault`
+  # itself restarts, since dev-mode storage doesn't survive that.
+  vault-init:
+    image: hashicorp/vault@sha256:750bb37c1638fa194ab37053a81618c61bb0491ddec6fccac87c07a8e6cd8166 # 1.18
+    container_name: mincirklen-vault-init
+    restart: 'no'
+    environment:
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: dev-only-not-for-production
+    entrypoint: ['sh', '-c']
+    command:
+      - |
+        vault secrets enable transit || true
+        vault write -f transit/keys/user-profile-pii
+    depends_on:
+      vault:
+        condition: service_healthy
+
+  trpc-api:
+    build:
+      context: .
+      dockerfile: services/trpc-api/dev.Dockerfile
+    container_name: mincirklen-trpc-api
+    restart: unless-stopped
+    environment:
+      PORT: '8787'
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      DATABASE_URL: postgres://mincirklen:mincirklen@postgres:5432/mincirklen
+      DB_SCHEMA: dev
+      MODERATION_SVC_URL: http://moderation-service:8082
+      AUTH_SECRET: dev-only-not-for-production
+      # Keys the OAuth subject hash (user_identities.provider_subject_hash)
+      # — deliberately a different value than AUTH_SECRET, same key-
+      # separation reasoning as the comment on AppEnv.identityHashKey.
+      IDENTITY_HASH_KEY: dev-only-not-for-production-identity-hash
+      NATS_URL: nats://nats:4222
+      PUBLIC_BASE_URL: https://dev-mincirklen.dk
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: dev-only-not-for-production
+    ports:
+      - '8787:8787'
+    volumes:
+      - ./services/trpc-api/src:/app/services/trpc-api/src
+      - ./packages/shared/src:/app/packages/shared/src
+      - ./packages/shared/migrations:/app/packages/shared/migrations
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      vault-init:
+        condition: service_completed_successfully
+
+  websocket-service:
+    build:
+      context: .
+      dockerfile: services/websocket-service/dev.Dockerfile
+    container_name: mincirklen-websocket-service
+    restart: unless-stopped
+    environment:
+      PORT: '8080'
+      DATABASE_URL: postgres://mincirklen:mincirklen@postgres:5432/mincirklen
+      DB_SCHEMA: dev
+      AUTH_SECRET: dev-only-not-for-production
+      NATS_URL: nats://nats:4222
+    ports:
+      - '8091:8080'
+    volumes:
+      - ./services/websocket-service/src:/app/services/websocket-service/src
+      - ./packages/shared/src:/app/packages/shared/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+
+  moderation-service:
+    build:
+      context: services/moderation-service
+      dockerfile: dev.Dockerfile
+    container_name: mincirklen-moderation-service
+    restart: unless-stopped
+    environment:
+      PORT: '8082'
+    # Not published to the host — mirrors the cloud architecture, where
+    # moderation-service is never public and is only reached service-to-service.
+    volumes:
+      - ./services/moderation-service/src:/app/src
+
+  web-app:
+    build:
+      context: services/web-app
+      dockerfile: dev.Dockerfile
+    container_name: mincirklen-web-app
+    restart: unless-stopped
+    ports:
+      - '5190:5190'
+    volumes:
+      - ./services/web-app:/app
+      - mincirklen-web-app-node-modules:/app/node_modules
+
+  # Dev-only admin UIs for the data stores, each reached only through Caddy
+  # (no host ports published) — same trust posture as moderation-service.
+
+  adminer:
+    image: adminer@sha256:c1c24d89d06fcb8fc0fb5a049240dc292ff4a121ae05d7e74d64b58c421d2921 # 4-standalone (4.17.1), Docker Official Image
+    container_name: mincirklen-adminer
+    restart: unless-stopped
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  redisinsight:
+    image: redis/redisinsight@sha256:b7aa18e73329ebb2e3d9e949b8d35193bf5415ef35c16fd9a50e6f832922b296 # 2.70, official Redis Ltd. image
+    container_name: mincirklen-redisinsight
+    restart: unless-stopped
+    volumes:
+      - mincirklen-redisinsight-data:/data
+    # No env-based auto-connect — add the connection once via its UI:
+    # host `redis`, port `6379`.
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  nats-nui:
+    image: ghcr.io/nats-nui/nui@sha256:331b3f34f8aa626f88e3aa3e35749196607a3a56d7fddc6fb642938dcd659c04 # 0.9.3
+    container_name: mincirklen-nats-nui
+    restart: unless-stopped
+    volumes:
+      - mincirklen-nats-nui-data:/db
+    # No env-based auto-connect — add the connection once via its UI:
+    # server URL `nats://nats:4222`.
+    depends_on:
+      nats:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: mincirklen-caddy
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./local-infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./local-infra/caddy/certs:/certs:ro
+    depends_on:
+      - trpc-api
+      - websocket-service
+      - web-app
+      - adminer
+      - redisinsight
+      - nats-nui
+
+  # Optional: WireGuard VPN so a phone/laptop off your LAN can tunnel in and
+  # reach dev-mincirklen.dk. Gated behind a profile so it never starts as
+  # part of a normal `docker compose up -d` / `down` — only via explicit
+  # `docker compose up -d vpn` (what ./setup-local-vpn.sh does). Admin account and
+  # WireGuard endpoint/DNS are set via a one-time web setup wizard on first
+  # visit, not env vars. See docs/local_dev.md and SECURITY.md.
+  vpn:
+    image: ghcr.io/wg-easy/wg-easy@sha256:0e7bc9d34e86ddcaa92bc700d4d7dc9b33291dbc07ac8d13382f7c2095f949ec # v15.4.0
+    container_name: mincirklen-vpn
+    restart: unless-stopped
+    profiles:
+      - vpn
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      # We deliberately never put TLS in front of the admin UI (it's only
+      # ever reachable over LAN or through the VPN tunnel itself, never the
+      # raw internet — see SECURITY.md). Without this, wg-easy marks its
+      # session cookie Secure and browsers silently drop it over plain
+      # http://, so login appears to "not work" even with correct
+      # credentials (the server-side session is created — check `docker
+      # compose logs vpn` — it just never survives client-side).
+      INSECURE: 'true'
+    ports:
+      # WireGuard listens on UDP 443 instead of the default 51820 — some
+      # mobile carriers/middleboxes are more lenient with 443 (indistinguishable
+      # from QUIC/HTTP3). No conflict with Caddy's TCP 443 below — UDP and TCP
+      # are independent port spaces. This wasn't actually required to fix the
+      # connectivity issue found during setup (see docs/vpn_local_dev.md), but
+      # is a reasonable default to keep. The interface's listening port must
+      # also be changed to 443 in the wg-easy admin UI (Settings > wg0) for
+      # this to take effect.
+      #
+      # IMPORTANT: changing the port that way also has a UI field labeled
+      # "Device" right next to it — leave it as `eth0`. Changing it to `wg0`
+      # (an easy mistake, since the port field is for the *WireGuard*
+      # interface) silently breaks NAT for all forwarded traffic — the
+      # handshake still succeeds but nothing else works. See
+      # docs/vpn_local_dev.md for the full story and the fix if it happens.
+      - '443:443/udp'
+      - '51821:51821/tcp'
+    volumes:
+      - mincirklen-vpn-data:/etc/wireguard
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+
+volumes:
+  mincirklen-postgres-data:
+  mincirklen-redis-data:
+  mincirklen-nats-data:
+  mincirklen-web-app-node-modules:
+  mincirklen-vpn-data:
+  mincirklen-redisinsight-data:
+  mincirklen-nats-nui-data:
