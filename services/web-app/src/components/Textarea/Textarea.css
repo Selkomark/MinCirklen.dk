@@ -31,6 +31,18 @@
   border-color: var(--accent-safe);
 }
 
+.ds-textarea__input:-webkit-autofill,
+.ds-textarea__input:-webkit-autofill:hover,
+.ds-textarea__input:-webkit-autofill:focus,
+.ds-textarea__input:-webkit-autofill:active,
+.ds-textarea__input:autofill {
+  -webkit-text-fill-color: var(--text-primary);
+  -webkit-box-shadow: 0 0 0 1000px var(--surface-raised) inset;
+  box-shadow: 0 0 0 1000px var(--surface-raised) inset;
+  caret-color: var(--text-primary);
+  transition: background-color 5000s ease-in-out 0s;
+}
+
 .ds-textarea__hint {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
