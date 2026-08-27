@@ -1,4 +1,4 @@
-name: Deploy web app
+name: Deploy design-system catalog
 
 on:
   push:
@@ -28,14 +28,14 @@ jobs:
       - name: Install dependencies
         working-directory: services/web-app
         run: bun install --frozen-lockfile
-      - name: Build docs site
+      - name: Build catalog site
+        # Builds src/main.tsx's mode==="catalog" branch — the design-system
+        # catalog only, not the real product (that runs against a live
+        # backend now — dev-mincirklen.dk locally, GKE/Cloud Run in prod,
+        # see IaC/ — and was never meant to be a GitHub Pages static
+        # export). See main.tsx.
         working-directory: services/web-app
         run: bun run build:docs
-      - name: SPA fallback for direct page links
-        # GitHub Pages has no server-side routing, so a hard load of e.g. /pages/privacy-policy
-        # 404s unless 404.html itself boots the app — it then reads location.pathname client-side
-        # and renders the matching public page (see matchPublicPage() in src/App.tsx).
-        run: cp services/web-app/dist-docs/index.html services/web-app/dist-docs/404.html
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
