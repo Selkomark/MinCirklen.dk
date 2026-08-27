@@ -89,6 +89,21 @@ module "secrets" {
   }
 }
 
+module "kms" {
+  source = "../../modules/kms"
+
+  project_id  = var.project_id
+  region      = var.region
+  environment = local.environment
+
+  # trpc-api is the only service that ever encrypts/decrypts user_profiles
+  # PII (see services/trpc-api/src/repositories/userProfileRepository.ts)
+  # — websocket-service and moderation-service never touch this key.
+  encrypter_decrypter_members = [
+    "serviceAccount:${google_service_account.trpc_api.email}",
+  ]
+}
+
 module "trpc_api" {
   source = "../../modules/cloud-run"
 
@@ -113,6 +128,8 @@ module "trpc_api" {
     DB_INSTANCE        = module.cloud_sql.instance_connection_name
     DB_NAME            = module.cloud_sql.database_name
     MODERATION_SVC_URL = module.moderation_service.uri
+    KMS_PROVIDER       = "gcp"
+    KMS_KEY_NAME       = module.kms.key_name
   }
 }
 

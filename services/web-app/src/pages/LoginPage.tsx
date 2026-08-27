@@ -6,6 +6,21 @@ import { SiteFooter } from '../SiteFooter'
 import { GoogleIcon } from '../GoogleIcon'
 import { useDocumentTitle } from '../useDocumentTitle'
 
+// oauthController.ts's callback redirects here with ?error=<code> instead
+// of ever showing its own error page — this is the only place that code
+// is translated into copy a user can act on.
+const LOGIN_ERROR_MESSAGES: Record<string, string> = {
+  oauth_state: 'Your sign-in link expired. Please try again.',
+  google_failed: "We couldn't confirm that with Google. Please try again.",
+  login_failed: 'Something went wrong on our end. Please try again.',
+}
+
+function loginErrorMessage(): string | null {
+  const code = new URLSearchParams(window.location.search).get('error')
+  if (!code) return null
+  return LOGIN_ERROR_MESSAGES[code] ?? LOGIN_ERROR_MESSAGES.login_failed ?? null
+}
+
 // Google is the only working provider. The others are kept (not deleted)
 // but hidden behind this flag so the layout/code is ready to re-enable
 // them once they're wired up — flip to true, don't re-add the list.
@@ -18,6 +33,7 @@ const OTHER_PROVIDERS = [
 
 export function LoginPage() {
   useDocumentTitle('Log in — MinCirklen')
+  const errorMessage = loginErrorMessage()
 
   return (
     <div style={{ minHeight: '100vh', fontFamily: 'var(--font-family-base)' }}>
@@ -52,6 +68,8 @@ export function LoginPage() {
               gap: 12,
             }}
           >
+            {errorMessage && <Alert variant="urgent">{errorMessage}</Alert>}
+
             <Button
               variant="secondary"
               onPress={() => {

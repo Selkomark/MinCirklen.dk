@@ -201,14 +201,15 @@ pinned by digest rather than a mutable tag, same convention as `vpn` below.
 
 ### Local KMS emulator (`vault`, `vault-init`)
 
-`docker-compose.yml` includes HashiCorp Vault in dev mode, standing in for
-a real cloud KMS (e.g. GCP Cloud KMS in production) so `trpc-api` can
-encrypt PII fields (`user_profiles.pii_ciphertext`) through the same
+`docker-compose.yml` runs a real (non-dev) HashiCorp Vault server, standing
+in for a real cloud KMS (e.g. GCP Cloud KMS in production) so `trpc-api`
+can encrypt PII fields (`user_profiles.pii_ciphertext`) through the same
 encrypt/decrypt adapter interface locally as it would in prod, rather than
 holding a raw symmetric key in an env var. `vault-init` is a one-shot
-container that enables Vault's Transit secrets engine and creates the
-`user-profile-pii` key once Vault is healthy; `trpc-api` depends on
-`vault-init` completing successfully before it starts.
+container that initializes Vault the first time it ever runs, unsealing
+it and ensuring the Transit engine/key and the fixed dev app token exist
+on every `docker compose up` after that; `trpc-api` depends on `vault-init`
+completing successfully before it starts.
 
 - **Image trust**: `hashicorp/vault` — HashiCorp's own verified-publisher
   image on Docker Hub, not a third party. `hashicorp/*` is already an
@@ -218,21 +219,37 @@ container that enables Vault's Transit secrets engine and creates the
   (`1.18` /
   `sha256:750bb37c1638fa194ab37053a81618c61bb0491ddec6fccac87c07a8e6cd8166`),
   same convention as `adminer`/`redisinsight`/`nats-nui`/`vpn` below.
-- **Dev mode, not production Vault**: runs with `-dev` (in-memory storage,
-  auto-unsealed, single fixed root token). Everything it holds — the
-  Transit key included — is lost on container restart, same as this
-  stack's other stores are throwaway. Never use dev-mode Vault, or this
-  token, for anything meant to persist or for real secrets.
+- **Persistent, not dev mode**: runs `vault server` with file storage
+  (`local-infra/vault/vault-config.hcl`, backed by the
+  `mincirklen-vault-data` volume) instead of `-dev`'s in-memory storage —
+  the Transit key survives `docker compose down`/`up` and container
+  restarts, same as postgres/redis/nats already do. This matters: a
+  from-scratch Transit key on every restart while Postgres data persisted
+  across the same restart used to mean any existing `user_profiles` row
+  became silently undecryptable — see `oauthController.ts` and
+  `authRouter.ts`'s `myProfile` for the app-side fix (login/gating never
+  depend on decrypt succeeding) and this section for the storage-side one.
+  Single Shamir key share (`-key-shares=1 -key-threshold=1`) — dev
+  convenience, not real Shamir security; never mirror that choice in
+  production. `vault-init` persists the generated unseal key and root
+  token to the separate `mincirklen-vault-init-data` volume (used only to
+  re-unseal on each restart) — a local Docker volume, never committed to
+  the repo, but still a real secret's worth of trust: don't reuse it or
+  its contents outside this dev stack.
 - **Network exposure**: published to the host on `8200`, like
   `postgres`/`redis`/`nats` (not routed through Caddy, and not restricted
   to `127.0.0.1` — same LAN-reachable posture as those), specifically so
   integration tests running via `bun test` on the host can reach it
   directly, the same way they reach the local Postgres. Acceptable under
-  the same reasoning as those: throwaway dev-mode token, no real secret or
-  persistent data behind it.
-- **Dev root token**: `dev-only-not-for-production` (matches the existing
+  the same reasoning as those: throwaway dev token, no real secret behind
+  it despite now being persistent.
+- **Dev app token**: `dev-only-not-for-production` (matches the existing
   `AUTH_SECRET` dev value) — a throwaway local credential, not a real
-  secret, consistent with the Postgres password note above.
+  secret, consistent with the Postgres password note above. Created once,
+  on Vault's very first init, with a fixed ID (`vault token create
+  -id=dev-only-not-for-production -policy=root -orphan`) specifically so
+  `trpc-api`/`websocket-service`'s `VAULT_TOKEN` env var never has to
+  change across a fresh init.
 
 ### Optional VPN (`vpn` service)
 

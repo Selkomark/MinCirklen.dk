@@ -10,6 +10,8 @@ import { StartNewPage } from './pages/start/StartNewPage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { ModerationTransparencyPage } from './pages/ModerationTransparencyPage'
+import { ErrorPage } from './pages/ErrorPage'
+import { ErrorBoundary } from './ErrorBoundary'
 import { PUBLIC_PAGES, PUBLIC_PAGE_ORDER, type PublicPageId } from './publicPages/pages'
 import { PublicPageView } from './publicPages/PublicPageView'
 import { CookieConsentBanner } from './CookieConsentBanner'
@@ -38,6 +40,7 @@ type Route =
   | { name: 'login' }
   | { name: 'register' }
   | { name: 'moderation-transparency' }
+  | { name: 'not-found' }
 
 // Top-level path segments the app itself owns. Public page slugs (privacy-policy, etc.)
 // live at the top level too ("/privacy-policy", not "/p/privacy-policy") for cleaner
@@ -93,7 +96,7 @@ function parseRoute(pathname: string): Route {
   const pageId = pageMatch?.[1] as PublicPageId | undefined
   if (pageId && pageId in PUBLIC_PAGES) return { name: 'public-page', id: pageId }
 
-  return { name: 'landing' }
+  return { name: 'not-found' }
 }
 
 // 'anonymous' covers both "no session at all" and "has a session but it's
@@ -106,7 +109,7 @@ function parseRoute(pathname: string): Route {
 // also enforced server-side by verifiedProcedure/googleLinkedProcedure in
 // controllers/trpc.ts — this is the UI-side half of the same gate, not a
 // replacement for it).
-type AuthStatus = { kind: 'loading' } | { kind: 'anonymous' } | { kind: 'needs-profile' } | { kind: 'verified' }
+export type AuthStatus = { kind: 'loading' } | { kind: 'anonymous' } | { kind: 'needs-profile' } | { kind: 'verified' }
 
 // `gateKey` is the current route's name while it's one of the gated routes
 // below, or null otherwise — used as the effect dependency (not a plain
@@ -116,7 +119,10 @@ type AuthStatus = { kind: 'loading' } | { kind: 'anonymous' } | { kind: 'needs-p
 // way to become authenticated, the Google OAuth redirect, reloads the page
 // and remounts this from scratch, so nothing else needs to keep this in
 // sync reactively.
-function useAuthStatus(gateKey: string | null): AuthStatus {
+// Exported for SiteHeader.tsx — it needs to know whether to show "Join
+// now" or "Log out" on every page it's rendered on, not just the gated
+// routes below that already fetch this for their own routing decisions.
+export function useAuthStatus(gateKey: string | null): AuthStatus {
   // Keyed on the gateKey the status was fetched *for*, not just the status
   // itself. Right after navigating between two gated routes (e.g.
   // /register -> /new post-submit), gateKey changes on this render but the
@@ -146,14 +152,14 @@ function useAuthStatus(gateKey: string | null): AuthStatus {
       }
 
       const body = (await res.json()) as {
-        result: { data: { hasLinkedIdentity: boolean; profile: unknown } }
+        result: { data: { hasLinkedIdentity: boolean; hasProfile: boolean } }
       }
-      const { hasLinkedIdentity, profile } = body.result.data
+      const { hasLinkedIdentity, hasProfile } = body.result.data
 
       if (!cancelled) {
         setState({
           key: gateKey,
-          status: !hasLinkedIdentity ? { kind: 'anonymous' } : profile == null ? { kind: 'needs-profile' } : { kind: 'verified' },
+          status: !hasLinkedIdentity ? { kind: 'anonymous' } : !hasProfile ? { kind: 'needs-profile' } : { kind: 'verified' },
         })
       }
     })()
@@ -232,6 +238,10 @@ function Shell() {
     return <ModerationTransparencyPage />
   }
 
+  if (route.name === 'not-found') {
+    return <ErrorPage code={404} title="Page not found" message="That page doesn't exist, or it may have moved." />
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
       <div
@@ -265,7 +275,9 @@ function Shell() {
 export default function App() {
   return (
     <ThemeProvider>
-      <Shell />
+      <ErrorBoundary>
+        <Shell />
+      </ErrorBoundary>
       <CookieConsentBanner />
     </ThemeProvider>
   )

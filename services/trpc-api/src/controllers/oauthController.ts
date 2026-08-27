@@ -1,13 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { createSessionToken, verifySessionToken } from '@mincirklen/shared'
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import { GoogleOAuthError, buildAuthorizationUrl, exchangeCodeForTokens, verifyIdToken } from '../adapters/googleOAuthAdapter'
 import { hashIdentitySubject } from '../auth/identityHash'
 import { SESSION_COOKIE_NAME, buildSessionCookie, type AppEnv } from '../context'
 import { findUserIdByIdentity, linkIdentity } from '../repositories/userIdentityRepository'
 import { insertUser, userExists } from '../repositories/userRepository'
-import { findUserProfileByUserId } from '../repositories/userProfileRepository'
+import { userProfileExists } from '../repositories/userProfileRepository'
 import { resolveGoogleLogin } from '../services/googleAuthService'
 
 const OAUTH_STATE_COOKIE_NAME = 'mc_oauth_state'
@@ -16,6 +16,14 @@ const GOOGLE_PROVIDER = 'google'
 
 function redirectUriFor(env: AppEnv): string {
   return `${env.publicBaseUrl}/api/auth/callback/google`
+}
+
+// Every failure branch below sends the browser back to a page it can
+// render, never a raw framework error page — a user mid-login (stale
+// OAuth state, an expired code, a KMS hiccup, a DB blip) should land on a
+// "try again" screen, not a blank "Internal Server Error".
+function loginErrorRedirect(c: Context, env: AppEnv, code: string) {
+  return c.redirect(`${env.publicBaseUrl}/login?error=${code}`, 302)
 }
 
 function configFor(env: AppEnv, clientId: string, clientSecret: string) {
@@ -62,12 +70,12 @@ export function createOAuthController(env: AppEnv): Hono {
     deleteCookie(c, OAUTH_STATE_COOKIE_NAME, { path: '/' })
 
     if (!stateParam || !stateCookie || stateParam !== stateCookie) {
-      return c.text('invalid or missing OAuth state', 400)
+      return loginErrorRedirect(c, env, 'oauth_state')
     }
 
     const code = c.req.query('code')
     if (!code) {
-      return c.text('missing authorization code', 400)
+      return loginErrorRedirect(c, env, 'oauth_state')
     }
 
     const config = configFor(env, env.googleClientId, env.googleClientSecret)
@@ -84,41 +92,56 @@ export function createOAuthController(env: AppEnv): Hono {
       ? (verifySessionToken(existingToken, env.authSecret)?.userId ?? null)
       : null
 
-    let subject: string
     try {
       const { idToken } = await exchangeCodeForTokens(config, code)
-      subject = (await verifyIdToken(config, idToken)).subject
+      const subject = (await verifyIdToken(config, idToken)).subject
+      const subjectHash = hashIdentitySubject(subject, env.identityHashKey)
+
+      // An established Google identity always wins over the active
+      // anonymous session (see googleAuthService.ts) — if this identity is
+      // already linked to a *different* user than whatever's active
+      // in the browser, mc_session silently switches to it. Flagged, not
+      // fixed, this pass — see the plan for why.
+      const { userId, hasProfile } = await resolveGoogleLogin(
+        {
+          findUserIdByIdentity: () => findUserIdByIdentity(env.db, GOOGLE_PROVIDER, subjectHash),
+          createUser: () => insertUser(env.db),
+          linkIdentity: (id) => linkIdentity(env.db, id, GOOGLE_PROVIDER, subjectHash),
+          // Existence-only, no decrypt — this is a routing decision
+          // (/start vs /register), not a read of the profile data, so it must
+          // never depend on KMS/Vault being reachable or on the right key
+          // version being available. See userProfileExists's comment.
+          hasProfile: (id) => userProfileExists(env.db, id),
+          userExists: (id) => userExists(env.db, id),
+        },
+        existingUserId,
+      )
+
+      const token = createSessionToken(userId, env.authSecret)
+      c.header('set-cookie', buildSessionCookie(token), { append: true })
+
+      // Based on whether a profile actually exists, not on whether the
+      // identity link is new — a user who linked Google but abandoned the
+      // registration form must be sent back to it on their next login too.
+      const destination = hasProfile ? '/start' : '/register?welcome=1'
+      return c.redirect(`${env.publicBaseUrl}${destination}`, 302)
     } catch (err) {
-      const message = err instanceof GoogleOAuthError ? err.message : 'Google sign-in failed'
-      return c.text(message, 400)
+      // Anything downstream of the code exchange — a bad/expired code, a
+      // KMS/Vault hiccup decrypting an existing profile, a transient DB
+      // error — must never surface as a raw framework error page. Log
+      // server-side for debugging, send the browser back to a page it can
+      // render.
+      console.error('[OAUTH] google callback failed', err)
+      const errorCode = err instanceof GoogleOAuthError ? 'google_failed' : 'login_failed'
+
+      // Whatever mc_session the browser walked in with was implicated in
+      // (or at least present for) a failed login — carrying it into the
+      // retry risks the exact same failure on the next attempt. Clearing
+      // it drops the browser back to a clean anonymous state so a retry
+      // has a real chance of succeeding.
+      deleteCookie(c, SESSION_COOKIE_NAME, { path: '/' })
+      return loginErrorRedirect(c, env, errorCode)
     }
-
-    const subjectHash = hashIdentitySubject(subject, env.identityHashKey)
-
-    // An established Google identity always wins over the active
-    // anonymous session (see googleAuthService.ts) — if this identity is
-    // already linked to a *different* user than whatever's active
-    // in the browser, mc_session silently switches to it. Flagged, not
-    // fixed, this pass — see the plan for why.
-    const { userId, hasProfile } = await resolveGoogleLogin(
-      {
-        findUserIdByIdentity: () => findUserIdByIdentity(env.db, GOOGLE_PROVIDER, subjectHash),
-        createUser: () => insertUser(env.db),
-        linkIdentity: (id) => linkIdentity(env.db, id, GOOGLE_PROVIDER, subjectHash),
-        hasProfile: async (id) => (await findUserProfileByUserId(env.db, env.vault, id)) !== null,
-        userExists: (id) => userExists(env.db, id),
-      },
-      existingUserId,
-    )
-
-    const token = createSessionToken(userId, env.authSecret)
-    c.header('set-cookie', buildSessionCookie(token), { append: true })
-
-    // Based on whether a profile actually exists, not on whether the
-    // identity link is new — a user who linked Google but abandoned the
-    // registration form must be sent back to it on their next login too.
-    const destination = hasProfile ? '/new' : '/register?welcome=1'
-    return c.redirect(`${env.publicBaseUrl}${destination}`, 302)
   })
 
   return app

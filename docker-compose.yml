@@ -82,9 +82,12 @@ services:
 
   # Local stand-in for a cloud KMS (e.g. GCP Cloud KMS in production) —
   # trpc-api calls its Transit engine to encrypt/decrypt user_profiles PII
-  # instead of holding a raw symmetric key in an env var. Dev mode only:
-  # in-memory storage, auto-unsealed, fixed root token — everything it
-  # holds is lost on restart. See SECURITY.md "Local KMS emulator".
+  # instead of holding a raw symmetric key in an env var. A real (non-dev)
+  # server with file storage, same as postgres/redis/nats: the Transit key
+  # survives `docker compose down`/`up` and container restarts instead of
+  # being regenerated from scratch — see vault-init below for init/unseal,
+  # and SECURITY.md "Local KMS emulator" for why a fresh Transit key under
+  # old ciphertext used to silently break every existing login.
   vault:
     image: hashicorp/vault@sha256:750bb37c1638fa194ab37053a81618c61bb0491ddec6fccac87c07a8e6cd8166 # 1.18
     container_name: mincirklen-vault
@@ -92,11 +95,24 @@ services:
     cap_add:
       - IPC_LOCK
     environment:
-      VAULT_DEV_ROOT_TOKEN_ID: dev-only-not-for-production
-      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
       VAULT_ADDR: http://127.0.0.1:8200
+    # Just "server", no explicit -config flag: the image's own entrypoint
+    # already appends `-config="/vault/config"` (a directory scan) for any
+    # `server` command — adding our own `-config=.../vault-config.hcl` on
+    # top of that loads the same listener stanza twice (once via the
+    # directory scan, once via our explicit path) and Vault tries to bind
+    # :8200 twice. Mounting the file directly into that scanned directory
+    # is enough.
+    command: ['server']
+    volumes:
+      - ./local-infra/vault/vault-config.hcl:/vault/config/vault-config.hcl:ro
+      - mincirklen-vault-data:/vault/file
     healthcheck:
-      test: ['CMD', 'vault', 'status']
+      # A freshly-restarted real Vault server starts up and sealed — that's
+      # expected, not a failure (vault-init below is what unseals it).
+      # `vault status` exits 2 for "sealed" and only 1 for a genuine
+      # connectivity/error, so only 1 should fail this healthcheck.
+      test: ['CMD-SHELL', 'vault status >/dev/null 2>&1; [ $$? -ne 1 ]']
       interval: 5s
       timeout: 3s
       retries: 10
@@ -106,21 +122,43 @@ services:
     # tests running via `bun test` on the host (not in a container) can
     # reach it directly — not routed through Caddy, same posture as those.
 
-  # One-shot: enables the Transit engine and creates the PII encryption key.
-  # Re-runs (and no-ops on the already-enabled engine) every time `vault`
-  # itself restarts, since dev-mode storage doesn't survive that.
+  # One-shot: initializes Vault the very first time (single key share —
+  # dev convenience, not real Shamir security), unseals it on every start,
+  # and ensures the Transit engine/key and the fixed dev app token exist.
+  # All idempotent — safe to re-run on every `docker compose up`, and after
+  # the first run there's nothing left to create since storage persists.
   vault-init:
     image: hashicorp/vault@sha256:750bb37c1638fa194ab37053a81618c61bb0491ddec6fccac87c07a8e6cd8166 # 1.18
     container_name: mincirklen-vault-init
     restart: 'no'
     environment:
       VAULT_ADDR: http://vault:8200
-      VAULT_TOKEN: dev-only-not-for-production
+    volumes:
+      - mincirklen-vault-init-data:/vault-init
     entrypoint: ['sh', '-c']
     command:
       - |
+        set -e
+        INIT_FILE=/vault-init/init.txt
+
+        if [ ! -f "$$INIT_FILE" ]; then
+          echo "First run: initializing Vault (local dev only)..."
+          vault operator init -key-shares=1 -key-threshold=1 > "$$INIT_FILE"
+        fi
+
+        UNSEAL_KEY=$$(awk '/^Unseal Key 1:/ { print $$NF }' "$$INIT_FILE")
+        ROOT_TOKEN=$$(awk '/^Initial Root Token:/ { print $$NF }' "$$INIT_FILE")
+
+        vault operator unseal "$$UNSEAL_KEY" >/dev/null
+
+        export VAULT_TOKEN="$$ROOT_TOKEN"
         vault secrets enable transit || true
         vault write -f transit/keys/user-profile-pii
+
+        # Fixed-ID app token so trpc-api/websocket-service's VAULT_TOKEN
+        # never has to change — only actually created on the first-ever
+        # run; every later run hits "duplicate ID" and no-ops via `|| true`.
+        vault token create -id=dev-only-not-for-production -policy=root -orphan >/dev/null 2>&1 || true
     depends_on:
       vault:
         condition: service_healthy
@@ -320,6 +358,8 @@ volumes:
   mincirklen-postgres-data:
   mincirklen-redis-data:
   mincirklen-nats-data:
+  mincirklen-vault-data:
+  mincirklen-vault-init-data:
   mincirklen-web-app-node-modules:
   mincirklen-vpn-data:
   mincirklen-redisinsight-data:

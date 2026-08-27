@@ -1,7 +1,7 @@
 import { initTRPC, TRPCError } from '@trpc/server'
 import type { AppContext } from '../context'
 import { hasLinkedIdentityForUser } from '../repositories/userIdentityRepository'
-import { findUserProfileByUserId } from '../repositories/userProfileRepository'
+import { userProfileExists } from '../repositories/userProfileRepository'
 import { isFullyVerified, isGoogleLinked } from '../services/verificationService'
 
 const t = initTRPC.context<AppContext>().create()
@@ -39,8 +39,10 @@ export const googleLinkedProcedure = protectedProcedure.use(async ({ ctx, next }
 export const verifiedProcedure = protectedProcedure.use(async ({ ctx, next }) => {
   const verified = await isFullyVerified({
     hasLinkedIdentity: () => hasLinkedIdentityForUser(ctx.appEnv.db, ctx.userId),
-    hasProfile: () =>
-      findUserProfileByUserId(ctx.appEnv.db, ctx.appEnv.vault, ctx.userId).then((profile) => profile !== null),
+    // Existence-only — this gate guards every real feature (create/join a
+    // circle, send a message), so it must never depend on KMS/Vault being
+    // reachable. See userProfileExists's comment.
+    hasProfile: () => userProfileExists(ctx.appEnv.db, ctx.userId),
   })
   if (!verified) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Google sign-in and profile completion required' })

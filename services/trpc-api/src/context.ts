@@ -21,6 +21,13 @@ export function buildSessionCookie(token: string): string {
   return `${SESSION_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${SESSION_COOKIE_MAX_AGE_SECONDS}`
 }
 
+// Same name/attributes as buildSessionCookie (a browser matches a cookie
+// to clear by name+path, not just name) with Max-Age=0 — used by
+// authRouter.ts's logout mutation.
+export function buildLogoutCookie(): string {
+  return `${SESSION_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`
+}
+
 export interface AppEnv {
   db: Kysely<Database>
   redis: Redis

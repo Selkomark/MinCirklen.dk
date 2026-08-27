@@ -9,6 +9,7 @@ const pool = createPgPool(
 const db = createDb(pool)
 
 const KMS = {
+  provider: 'vault' as const,
   vaultAddr: process.env.TEST_VAULT_ADDR ?? 'http://localhost:8200',
   vaultToken: process.env.TEST_VAULT_TOKEN ?? 'dev-only-not-for-production',
 }

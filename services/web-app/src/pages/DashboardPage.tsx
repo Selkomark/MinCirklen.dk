@@ -2,14 +2,31 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '../components/Button'
 import { Avatar } from '../components/Avatar'
 import { Checkbox } from '../components/Checkbox'
+import { Menu, MenuItem } from '../components/Menu'
 import { Modal } from '../components/Modal'
 import { Textarea } from '../components/Textarea'
 import { addToast } from '../components/Toast'
 import { ThemeToggle } from '../ThemeToggle'
 import { PUBLIC_PAGES, publicPagePath } from '../publicPages/pages'
-import { moderationTransparencyPath } from '../App'
+import { moderationTransparencyPath, landingPath } from '../App'
 import { useDocumentTitle } from '../useDocumentTitle'
+import { logout } from '../logout'
 import './DashboardPage.css'
+
+// Session pages have their own layout (no SiteHeader) — the account menu
+// next to the brand logo in the sidebar is this page's equivalent of
+// SiteHeader's "Log out" button. Same shared network call, same hard
+// navigation on success; failure surfaces as a toast (not an inline Alert
+// like SiteHeader's — a closed dropdown menu has no card/section left to
+// put one in).
+async function handleLogout() {
+  try {
+    await logout()
+    window.location.href = landingPath()
+  } catch {
+    addToast('Something went wrong logging out.', { variant: 'urgent' })
+  }
+}
 
 const COMMUNITY_RULES = [
   {
@@ -510,11 +527,16 @@ export function DashboardPage() {
 
   const sidebarHeader = (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <div style={{ width: 22, height: 22, borderRadius: 'var(--radius-full)', border: '1.5px solid var(--text-primary)' }} />
-        <span style={{ fontSize: 'var(--font-size-md)', fontWeight: 'var(--font-weight-bold)' as unknown as number, color: 'var(--text-primary)' }}>
-          MinCirklen
-        </span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ width: 22, height: 22, borderRadius: 'var(--radius-full)', border: '1.5px solid var(--text-primary)' }} />
+          <span style={{ fontSize: 'var(--font-size-md)', fontWeight: 'var(--font-weight-bold)' as unknown as number, color: 'var(--text-primary)' }}>
+            MinCirklen
+          </span>
+        </div>
+        <Menu label="⋯" onAction={(key) => key === 'logout' && void handleLogout()}>
+          <MenuItem id="logout">Log out</MenuItem>
+        </Menu>
       </div>
       <Button variant="safe" onPress={newSession} style={{ width: '100%' }}>
         New session

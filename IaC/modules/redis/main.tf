@@ -125,5 +125,15 @@ resource "google_redis_instance" "this" {
   connect_mode            = "PRIVATE_SERVICE_ACCESS"
   transit_encryption_mode = "SERVER_AUTHENTICATION"
 
+  # Memorystore has no persistence by default (persistence_mode defaults to
+  # DISABLED) — without this, a maintenance event or instance restart loses
+  # everything, unlike the self-hosted path above which has AOF+PVC. RDB is
+  # the only option Memorystore offers (no AOF); hourly is the tightest
+  # snapshot period available.
+  persistence_config {
+    persistence_mode    = "RDB"
+    rdb_snapshot_period = "ONE_HOUR"
+  }
+
   depends_on = [var.private_vpc_connection]
 }

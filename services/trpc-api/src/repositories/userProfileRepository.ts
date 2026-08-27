@@ -80,6 +80,18 @@ export async function upsertUserProfile(
   }
 }
 
+// Existence-only, no KMS/decrypt involved — for callers that only need to
+// know "has this user completed registration" (login routing, the
+// verifiedProcedure gate) and never touch the PII itself. Keeping these
+// off the decrypt path means a KMS/Vault outage or key-rotation hiccup
+// can degrade profile *display* without also breaking login and every
+// gated feature — see findUserProfileByUserId for the one place that
+// still needs the real, decrypted data.
+export async function userProfileExists(db: Kysely<Database>, userId: string): Promise<boolean> {
+  const row = await db.selectFrom('user_profiles').select('id').where('user_id', '=', userId).executeTakeFirst()
+  return row !== undefined
+}
+
 export async function findUserProfileByUserId(
   db: Kysely<Database>,
   kms: KmsConfig,

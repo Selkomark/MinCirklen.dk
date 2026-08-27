@@ -31,6 +31,7 @@ const CLIENT_SECRET = 'fake-client-secret'
 const AUTH_SECRET = 'oauth-integration-test-secret'
 const PUBLIC_BASE_URL = 'https://dev-mincirklen.dk'
 const TEST_VAULT = {
+  provider: 'vault' as const,
   vaultAddr: process.env.TEST_VAULT_ADDR ?? 'http://localhost:8200',
   vaultToken: process.env.TEST_VAULT_TOKEN ?? 'dev-only-not-for-production',
 }
@@ -155,7 +156,7 @@ describe('GET /auth/callback/google', () => {
     expect(linked.user_id).not.toBeNull()
   })
 
-  test('a repeat login for the same subject reuses the user and redirects to /new once a profile exists', async () => {
+  test('a repeat login for the same subject reuses the user and redirects to /start once a profile exists', async () => {
     nextSubject = `subject-${crypto.randomUUID()}`
 
     const subjectHash = hashSubject(nextSubject)
@@ -188,7 +189,7 @@ describe('GET /auth/callback/google', () => {
     })
 
     expect(secondRes.status).toBe(302)
-    expect(secondRes.headers.get('location')).toBe(`${PUBLIC_BASE_URL}/new`)
+    expect(secondRes.headers.get('location')).toBe(`${PUBLIC_BASE_URL}/start`)
 
     const rows = await db
       .selectFrom('user_identities')
@@ -270,31 +271,96 @@ describe('GET /auth/callback/google', () => {
     expect(linkedUser).toBeDefined()
   })
 
-  test('rejects a missing state', async () => {
+  test('a missing state redirects to the login page with an error, not a raw error page', async () => {
     const res = await app.request('/auth/callback/google?code=fake-code')
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe(`${PUBLIC_BASE_URL}/login?error=oauth_state`)
   })
 
-  test('rejects a mismatched state', async () => {
+  test('a mismatched state redirects to the login page with an error', async () => {
     const { stateCookie } = await startLogin()
     const res = await app.request('/auth/callback/google?code=fake-code&state=not-the-right-state', {
       headers: { cookie: stateCookie },
     })
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe(`${PUBLIC_BASE_URL}/login?error=oauth_state`)
   })
 
-  test('rejects a missing authorization code', async () => {
+  test('a missing authorization code redirects to the login page with an error', async () => {
     const { stateCookie, state } = await startLogin()
     const res = await app.request(`/auth/callback/google?state=${state}`, { headers: { cookie: stateCookie } })
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe(`${PUBLIC_BASE_URL}/login?error=oauth_state`)
   })
 
-  test('returns 400 when Google token exchange fails', async () => {
+  test('a failed Google token exchange redirects to the login page with an error', async () => {
     const { stateCookie, state } = await startLogin()
     const res = await app.request(`/auth/callback/google?code=fail-me&state=${state}`, {
       headers: { cookie: stateCookie },
     })
-    expect(res.status).toBe(400)
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe(`${PUBLIC_BASE_URL}/login?error=google_failed`)
+  })
+
+  test('login succeeds even when an existing profile cannot be decrypted — hasProfile never depends on KMS', async () => {
+    nextSubject = `subject-${crypto.randomUUID()}`
+    const subjectHash = hashSubject(nextSubject)
+
+    const first = await startLogin()
+    await app.request(`/auth/callback/google?code=fake-code&state=${first.state}`, {
+      headers: { cookie: first.stateCookie },
+    })
+    const linked = await db
+      .selectFrom('user_identities')
+      .select('user_id')
+      .where('provider_subject_hash', '=', subjectHash)
+      .executeTakeFirstOrThrow()
+    await upsertUserProfile(db, TEST_VAULT, {
+      userId: linked.user_id,
+      firstName: 'Ada',
+      lastName: 'Lovelace',
+      country: 'GB',
+      mobileNumber: '+44 20 7946 0958',
+      stayAnonymous: true,
+      termsAcceptedAt: new Date(),
+    })
+
+    // Reproduces a real incident: Vault's transit key rotated (e.g. a dev
+    // environment rebuild) out from under ciphertext that was already
+    // written under the old key. Before the userProfileExists fix, this
+    // login-routing check went through findUserProfileByUserId (which
+    // decrypts), so a KMS/Vault outage here would 500 the whole callback
+    // and lock an already-registered user out. It's now decrypt-free, so
+    // login must succeed and route to /start exactly as if nothing were
+    // wrong — only *reading* the PII (auth.myProfile) degrades.
+    await db
+      .updateTable('user_profiles')
+      .set({ pii_ciphertext: 'not-a-real-vault-ciphertext' })
+      .where('user_id', '=', linked.user_id)
+      .execute()
+
+    const second = await startLogin()
+    const secondRes = await app.request(`/auth/callback/google?code=fake-code&state=${second.state}`, {
+      headers: { cookie: second.stateCookie },
+    })
+
+    expect(secondRes.status).toBe(302)
+    expect(secondRes.headers.get('location')).toBe(`${PUBLIC_BASE_URL}/start`)
+  })
+
+  test('a failed login clears any mc_session cookie the browser walked in with, so a retry starts clean', async () => {
+    nextSubject = `subject-${crypto.randomUUID()}`
+    const staleToken = createSessionToken(crypto.randomUUID(), AUTH_SECRET)
+
+    const { stateCookie, state } = await startLogin()
+    const res = await app.request(`/auth/callback/google?code=fail-me&state=${state}`, {
+      headers: { cookie: `${stateCookie}; mc_session=${staleToken}` },
+    })
+
+    expect(res.status).toBe(302)
+    const sessionCookieHeader = res.headers.getSetCookie().find((c) => c.startsWith('mc_session='))
+    expect(sessionCookieHeader).toBeDefined()
+    expect(sessionCookieHeader).toContain('Max-Age=0')
   })
 })
 

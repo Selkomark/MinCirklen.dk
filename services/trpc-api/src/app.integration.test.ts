@@ -21,6 +21,7 @@ const app = createApp({
   moderationServiceUrl: 'http://unused.invalid',
   publicBaseUrl: 'https://dev-mincirklen.dk',
   vault: {
+    provider: 'vault',
     vaultAddr: process.env.TEST_VAULT_ADDR ?? 'http://localhost:8200',
     vaultToken: process.env.TEST_VAULT_TOKEN ?? 'dev-only-not-for-production',
   },
@@ -71,6 +72,32 @@ describe('auth flow through the Hono app', () => {
 
     const unauthed = await app.request('/trpc/auth.whoAmI')
     expect(unauthed.status).toBe(401)
+  })
+
+  test('logout clears the session cookie and works even with no session at all', async () => {
+    const created = await app.request('/trpc/auth.createAnonymousSession', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    const cookie = extractCookie(created)
+
+    const res = await app.request('/trpc/auth.logout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({}),
+    })
+    expect(res.status).toBe(200)
+    const sessionCookieHeader = res.headers.getSetCookie().find((c) => c.startsWith('mc_session='))
+    expect(sessionCookieHeader).toBeDefined()
+    expect(sessionCookieHeader).toContain('Max-Age=0')
+
+    const withoutSession = await app.request('/trpc/auth.logout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    expect(withoutSession.status).toBe(200)
   })
 
   test('completeProfile rejects a session that has no linked Google identity', async () => {
@@ -131,7 +158,7 @@ describe('auth flow through the Hono app', () => {
     expect(res.status).toBe(200)
   })
 
-  test('myProfile reports hasLinkedIdentity/profile through the full verification lifecycle, and requires auth', async () => {
+  test('myProfile reports hasLinkedIdentity/hasProfile/profile through the full verification lifecycle, and requires auth', async () => {
     const created = await app.request('/trpc/auth.createAnonymousSession', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -142,14 +169,18 @@ describe('auth flow through the Hono app', () => {
 
     const bare = await app.request('/trpc/auth.myProfile', { headers: { cookie } })
     expect(bare.status).toBe(200)
-    const bareBody = (await bare.json()) as { result: { data: { hasLinkedIdentity: boolean; profile: unknown } } }
-    expect(bareBody.result.data).toEqual({ hasLinkedIdentity: false, profile: null })
+    const bareBody = (await bare.json()) as {
+      result: { data: { hasLinkedIdentity: boolean; hasProfile: boolean; profile: unknown } }
+    }
+    expect(bareBody.result.data).toEqual({ hasLinkedIdentity: false, hasProfile: false, profile: null })
 
     await linkIdentity(db, session.data.userId, 'google', `test-subject-${session.data.userId}`)
 
     const linked = await app.request('/trpc/auth.myProfile', { headers: { cookie } })
-    const linkedBody = (await linked.json()) as { result: { data: { hasLinkedIdentity: boolean; profile: unknown } } }
-    expect(linkedBody.result.data).toEqual({ hasLinkedIdentity: true, profile: null })
+    const linkedBody = (await linked.json()) as {
+      result: { data: { hasLinkedIdentity: boolean; hasProfile: boolean; profile: unknown } }
+    }
+    expect(linkedBody.result.data).toEqual({ hasLinkedIdentity: true, hasProfile: false, profile: null })
 
     await app.request('/trpc/auth.completeProfile', {
       method: 'POST',
@@ -165,13 +196,56 @@ describe('auth flow through the Hono app', () => {
 
     const after = await app.request('/trpc/auth.myProfile', { headers: { cookie } })
     const afterBody = (await after.json()) as {
-      result: { data: { hasLinkedIdentity: boolean; profile: { firstName: string } | null } }
+      result: { data: { hasLinkedIdentity: boolean; hasProfile: boolean; profile: { firstName: string } | null } }
     }
     expect(afterBody.result.data.hasLinkedIdentity).toBe(true)
+    expect(afterBody.result.data.hasProfile).toBe(true)
     expect(afterBody.result.data.profile?.firstName).toBe('Grace')
 
     const unauthed = await app.request('/trpc/auth.myProfile')
     expect(unauthed.status).toBe(401)
+  })
+
+  test('myProfile reports hasProfile:true (and keeps the app usable) even when the profile ciphertext cannot be decrypted', async () => {
+    // Reproduces the real incident: Vault's transit key rotated/reset out
+    // from under existing ciphertext. Before this fix, myProfile's
+    // hasProfile signal was derived from decrypt success — a KMS/Vault
+    // outage silently reported a fully-registered user as "needs
+    // profile," bouncing them back into the registration flow forever
+    // instead of just degrading PII display.
+    const created = await app.request('/trpc/auth.createAnonymousSession', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    const cookie = extractCookie(created)
+    const { result: session } = (await created.json()) as { result: { data: { userId: string } } }
+    await linkIdentity(db, session.data.userId, 'google', `test-subject-${session.data.userId}`)
+
+    await app.request('/trpc/auth.completeProfile', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        country: 'GB',
+        mobileNumber: '+44 20 7946 0958',
+        stayAnonymous: true,
+      }),
+    })
+
+    await db
+      .updateTable('user_profiles')
+      .set({ pii_ciphertext: 'not-a-real-vault-ciphertext' })
+      .where('user_id', '=', session.data.userId)
+      .execute()
+
+    const res = await app.request('/trpc/auth.myProfile', { headers: { cookie } })
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      result: { data: { hasLinkedIdentity: boolean; hasProfile: boolean; profile: unknown } }
+    }
+    expect(body.result.data).toEqual({ hasLinkedIdentity: true, hasProfile: true, profile: null })
   })
 })
 

@@ -48,6 +48,7 @@ locals {
     "vpcaccess.googleapis.com",
     "certificatemanager.googleapis.com",
     "sts.googleapis.com",
+    "cloudkms.googleapis.com",
   ]
 }
 
