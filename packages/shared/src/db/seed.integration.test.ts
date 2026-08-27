@@ -1,13 +1,10 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { createDb } from './kysely'
 import { runMigrations } from './migrate'
-import { createPgPool } from './pool'
+import { DEFAULT_LOCAL_DATABASE_URL, createPgPool } from './pool'
 import { SEED_USER_ID, SEED_SESSION_ID, seedTestDb } from './seed'
 
-const pool = createPgPool(
-  process.env.TEST_DATABASE_URL ?? 'postgres://mincirklen:mincirklen@localhost:5433/mincirklen',
-  'test',
-)
+const pool = createPgPool(process.env.TEST_DATABASE_URL ?? DEFAULT_LOCAL_DATABASE_URL, 'test')
 const db = createDb(pool)
 
 await runMigrations(db, 'test')

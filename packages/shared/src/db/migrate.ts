@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { FileMigrationProvider, Migrator, sql, type Kysely } from 'kysely'
+import { DEFAULT_LOCAL_DATABASE_URL } from './pool'
 import type { Database } from './types'
 
 const defaultMigrationFolder = path.join(
@@ -50,7 +51,7 @@ export async function runMigrations(
 }
 
 export async function runCliMigration(
-  databaseUrl = process.env.DATABASE_URL ?? 'postgres://mincirklen:mincirklen@localhost:5433/mincirklen',
+  databaseUrl = process.env.DATABASE_URL ?? DEFAULT_LOCAL_DATABASE_URL,
   schema = 'dev',
 ): Promise<void> {
   const { createPgPool } = await import('./pool')

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { TRPCError } from '@trpc/server'
+import { createSessionInputSchema, listOpenSessionsInputSchema } from '@mincirklen/shared'
 import { classifyMessage } from '../adapters/moderationServiceAdapter'
 import { publishMessage } from '../adapters/natsAdapter'
 import { insertModerationEvent } from '../repositories/moderationEventRepository'
@@ -18,6 +19,7 @@ import {
   getSessionState as getSessionStateRepo,
   isSessionMember,
   joinSession as joinSessionRepo,
+  listOpenSessions as listOpenSessionsRepo,
   releaseTurnClaim,
 } from '../repositories/sessionRepository'
 import { escalate } from '../services/crisisEscalationService'
@@ -44,8 +46,26 @@ function toTRPCError(err: unknown): TRPCError {
 const sessionIdInput = z.object({ sessionId: z.string().uuid() })
 
 export const sessionRouter = router({
-  create: verifiedProcedure.mutation(async ({ ctx }) => {
-    return sessionService.createSession({ createSession: () => createSessionRepo(ctx.appEnv.db) })
+  create: verifiedProcedure.input(createSessionInputSchema).mutation(async ({ ctx, input }) => {
+    return sessionService.createSession({
+      createSession: () =>
+        createSessionRepo(
+          ctx.appEnv.db,
+          input.scheduled
+            ? {
+                topicId: input.topicId,
+                name: input.name,
+                scheduledAt: input.scheduledAt,
+                durationMinutes: input.durationMinutes,
+                capacity: input.capacity,
+              }
+            : undefined,
+        ),
+    })
+  }),
+
+  listOpen: verifiedProcedure.input(listOpenSessionsInputSchema).query(async ({ ctx, input }) => {
+    return sessionService.listOpenSessions({ listOpenSessions: () => listOpenSessionsRepo(ctx.appEnv.db, input) })
   }),
 
   join: verifiedProcedure.input(sessionIdInput).mutation(async ({ ctx, input }) => {

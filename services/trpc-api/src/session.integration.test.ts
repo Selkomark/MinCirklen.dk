@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { createDb, createPgPool, runMigrations } from '@mincirklen/shared'
+import { DEFAULT_LOCAL_DATABASE_URL, createDb, createPgPool, runMigrations } from '@mincirklen/shared'
 import type { Redis } from 'ioredis'
 import { connect, type NatsConnection } from 'nats'
 import { createApp } from './app'
@@ -7,7 +7,7 @@ import { linkIdentity } from './repositories/userIdentityRepository'
 import { upsertUserProfile } from './repositories/userProfileRepository'
 
 const pool = createPgPool(
-  process.env.TEST_DATABASE_URL ?? 'postgres://mincirklen:mincirklen@localhost:5433/mincirklen',
+  process.env.TEST_DATABASE_URL ?? DEFAULT_LOCAL_DATABASE_URL,
   'test',
 )
 const db = createDb(pool)
@@ -112,7 +112,7 @@ async function call(actor: Actor, path: string, input: unknown) {
   })
 }
 
-async function query(actor: Actor, path: string, input: Record<string, string>) {
+async function query(actor: Actor, path: string, input: Record<string, unknown>) {
   const search = new URLSearchParams({ input: JSON.stringify(input) })
   return app.request(`/trpc/${path}?${search.toString()}`, {
     headers: { cookie: actor.cookie },
@@ -307,5 +307,158 @@ describe('session + message pipeline', () => {
       sessionId: '00000000-0000-0000-0000-000000000000',
     })
     expect(notFoundRes.status).toBe(404)
+  })
+})
+
+describe('topics.list', () => {
+  test('returns the seeded topics to a verified actor', async () => {
+    const actor = await createActor()
+    const res = await query(actor, 'topics.list', {})
+    expect(res.status).toBe(200)
+
+    const { result } = (await res.json()) as { result: { data: { slug: string; label: string }[] } }
+    expect(result.data.some((t) => t.slug === 'grief' && t.label === 'Grief')).toBe(true)
+  })
+})
+
+describe('scheduled circles (/start/new, /start/join)', () => {
+  async function griefTopicId(actor: Actor): Promise<string> {
+    const res = await query(actor, 'topics.list', {})
+    const { result } = (await res.json()) as { result: { data: { id: string; slug: string }[] } }
+    return result.data.find((t) => t.slug === 'grief')!.id
+  }
+
+  test('create persists topic/schedule/duration/capacity, and the circle appears in listOpen', async () => {
+    const alice = await createActor()
+    const topicId = await griefTopicId(alice)
+
+    const createRes = await call(alice, 'session.create', {
+      topicId,
+      name: 'Weekly grief circle',
+      scheduledAt: '2026-09-01T18:00:00.000Z',
+      durationMinutes: 45,
+      capacity: 6,
+    })
+    expect(createRes.status).toBe(200)
+    const { result: created } = (await createRes.json()) as { result: { data: { id: string } } }
+
+    const openRes = await query(alice, 'session.listOpen', { topicId, limit: 50 })
+    expect(openRes.status).toBe(200)
+    const { result: open } = (await openRes.json()) as {
+      result: {
+        data: {
+          sessions: {
+            id: string
+            name: string
+            durationMinutes: number | null
+            capacity: number
+            joinedCount: number
+            topic: { id: string; slug: string; label: string }
+          }[]
+          nextCursor: string | null
+        }
+      }
+    }
+    const listed = open.data.sessions.find((s) => s.id === created.data.id)
+    expect(listed).toMatchObject({
+      name: 'Weekly grief circle',
+      durationMinutes: 45,
+      capacity: 6,
+      joinedCount: 0,
+      topic: { id: topicId, slug: 'grief', label: 'Grief' },
+    })
+  })
+
+  test('listOpen supports filtering by search term and paging via nextCursor', async () => {
+    const alice = await createActor()
+    const topicId = await griefTopicId(alice)
+    const marker = crypto.randomUUID().slice(0, 8)
+
+    for (let i = 0; i < 3; i++) {
+      await call(alice, 'session.create', {
+        topicId,
+        name: `Search filter circle ${marker} ${i}`,
+        scheduledAt: '2026-09-01T18:00:00.000Z',
+        durationMinutes: 30,
+        capacity: 8,
+      })
+    }
+
+    const firstPageRes = await query(alice, 'session.listOpen', { search: marker, limit: 2 })
+    expect(firstPageRes.status).toBe(200)
+    const { result: firstPage } = (await firstPageRes.json()) as {
+      result: { data: { sessions: { id: string }[]; nextCursor: string | null; prevCursor: string | null } }
+    }
+    expect(firstPage.data.sessions).toHaveLength(2)
+    expect(firstPage.data.nextCursor).not.toBeNull()
+    expect(firstPage.data.prevCursor).toBeNull()
+
+    const secondPageRes = await query(alice, 'session.listOpen', {
+      search: marker,
+      limit: 2,
+      cursor: firstPage.data.nextCursor as string,
+    })
+    const { result: secondPage } = (await secondPageRes.json()) as {
+      result: { data: { sessions: { id: string }[]; nextCursor: string | null; prevCursor: string | null } }
+    }
+    expect(secondPage.data.sessions).toHaveLength(1)
+    expect(secondPage.data.nextCursor).toBeNull()
+    expect(secondPage.data.prevCursor).not.toBeNull()
+
+    const allIds = new Set([...firstPage.data.sessions, ...secondPage.data.sessions].map((s) => s.id))
+    expect(allIds.size).toBe(3)
+
+    // Windowed browsing (StartJoinPage.tsx) relies on this: paging
+    // backward from the second page's own prevCursor must reproduce the
+    // first page exactly.
+    const backRes = await query(alice, 'session.listOpen', {
+      search: marker,
+      limit: 2,
+      cursor: secondPage.data.prevCursor as string,
+      direction: 'before',
+    })
+    const { result: back } = (await backRes.json()) as { result: { data: { sessions: { id: string }[] } } }
+    expect(back.data.sessions.map((s) => s.id)).toEqual(firstPage.data.sessions.map((s) => s.id))
+  })
+
+  test('enforces the circle\'s own capacity rather than the ad-hoc default of 8', async () => {
+    const alice = await createActor()
+    const topicId = await griefTopicId(alice)
+
+    const createRes = await call(alice, 'session.create', {
+      topicId,
+      name: 'Small grief circle',
+      scheduledAt: '2026-09-01T18:00:00.000Z',
+      durationMinutes: null,
+      capacity: 1,
+    })
+    const { result: created } = (await createRes.json()) as { result: { data: { id: string } } }
+    const sessionId = created.data.id
+
+    await call(alice, 'session.join', { sessionId })
+
+    const bob = await createActor()
+    const fullRes = await call(bob, 'session.join', { sessionId })
+    expect(fullRes.status).toBe(409)
+  })
+
+  test('rejects a partially-filled scheduling input', async () => {
+    const alice = await createActor()
+    const res = await call(alice, 'session.create', { topicId: await griefTopicId(alice) })
+    expect(res.status).toBe(400)
+  })
+
+  test('rejects scheduling a circle more than a week out', async () => {
+    const alice = await createActor()
+    const eightDaysOut = new Date(Date.now() + 8 * 24 * 60 * 60 * 1000).toISOString()
+
+    const res = await call(alice, 'session.create', {
+      topicId: await griefTopicId(alice),
+      name: 'Too far out',
+      scheduledAt: eightDaysOut,
+      durationMinutes: 60,
+      capacity: 6,
+    })
+    expect(res.status).toBe(400)
   })
 })

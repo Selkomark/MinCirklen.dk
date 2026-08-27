@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { createDb, createPgPool, createSessionToken, roomSubject, runMigrations } from '@mincirklen/shared'
+import { DEFAULT_LOCAL_DATABASE_URL, createDb, createPgPool, createSessionToken, roomSubject, runMigrations } from '@mincirklen/shared'
 import { connect, type NatsConnection } from 'nats'
 import { createApp } from './app'
 
@@ -7,7 +7,7 @@ const NATS_URL = process.env.NATS_URL ?? 'nats://localhost:4222'
 const AUTH_SECRET = 'fanout-integration-test-secret'
 
 const pool = createPgPool(
-  process.env.TEST_DATABASE_URL ?? 'postgres://mincirklen:mincirklen@localhost:5433/mincirklen',
+  process.env.TEST_DATABASE_URL ?? DEFAULT_LOCAL_DATABASE_URL,
   'test',
 )
 const db = createDb(pool)

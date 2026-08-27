@@ -1,4 +1,4 @@
-import type { RosterEntry, SessionState } from '../repositories/sessionRepository'
+import type { ListOpenSessionsResult, RosterEntry, SessionState } from '../repositories/sessionRepository'
 
 export interface CreateSessionDeps {
   createSession(): Promise<{ id: string }>
@@ -6,6 +6,14 @@ export interface CreateSessionDeps {
 
 export async function createSession(deps: CreateSessionDeps): Promise<{ id: string }> {
   return deps.createSession()
+}
+
+export interface ListOpenSessionsDeps {
+  listOpenSessions(): Promise<ListOpenSessionsResult>
+}
+
+export async function listOpenSessions(deps: ListOpenSessionsDeps): Promise<ListOpenSessionsResult> {
+  return deps.listOpenSessions()
 }
 
 export interface JoinSessionDeps {

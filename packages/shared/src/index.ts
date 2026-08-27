@@ -6,6 +6,7 @@ export * from './schemas/feedbackRating'
 export * from './schemas/moderationEvent'
 export * from './schemas/userIdentity'
 export * from './schemas/userProfile'
+export * from './schemas/topic'
 
 export * from './constants/roundPacing'
 export * from './constants/session'

@@ -299,8 +299,8 @@ function UserAvatar({
   )
 }
 
-// Matches NewSessionPage's Chip pattern (pill-style choice control), reused here so the
-// "who is this about" picker looks consistent with the rest of the product.
+// Matches pages/start/shared.tsx's Chip pattern (pill-style choice control), reused here so
+// the "who is this about" picker looks consistent with the rest of the product.
 function chipStyle(active: boolean): React.CSSProperties {
   return {
     cursor: 'pointer',

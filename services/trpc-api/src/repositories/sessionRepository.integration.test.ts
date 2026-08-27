@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { createDb, createPgPool, runMigrations } from '@mincirklen/shared'
+import { DEFAULT_LOCAL_DATABASE_URL, createDb, createPgPool, runMigrations } from '@mincirklen/shared'
 import {
   NotYourTurnError,
   SessionFullError,
@@ -12,11 +12,12 @@ import {
   getSessionState,
   isSessionMember,
   joinSession,
+  listOpenSessions,
   releaseTurnClaim,
 } from './sessionRepository'
 
 const pool = createPgPool(
-  process.env.TEST_DATABASE_URL ?? 'postgres://mincirklen:mincirklen@localhost:5433/mincirklen',
+  process.env.TEST_DATABASE_URL ?? DEFAULT_LOCAL_DATABASE_URL,
   'test',
 )
 const db = createDb(pool)
@@ -26,6 +27,16 @@ await runMigrations(db, 'test')
 afterAll(async () => {
   await db.destroy()
 })
+
+// sort_order is pushed high so this never interleaves with the seeded
+// product topics' ordering assumptions in topicRepository.integration.test.ts.
+async function seedTopic() {
+  return db
+    .insertInto('topics')
+    .values({ slug: `test-topic-${crypto.randomUUID()}`, label: 'Test topic', sort_order: 999 })
+    .returningAll()
+    .executeTakeFirstOrThrow()
+}
 
 async function seedSessionWithUsers(count: number) {
   const session = await createSession(db)
@@ -48,6 +59,42 @@ describe('createSession', () => {
     expect(state?.status).toBe('forming')
     expect(state?.currentTurnUserId).toBeNull()
     expect(state?.roster).toEqual([])
+  })
+
+  test('leaves scheduling columns null when no params are given', async () => {
+    const { id } = await createSession(db)
+    const row = await db
+      .selectFrom('sessions')
+      .select(['topic_id', 'name', 'scheduled_at', 'duration_minutes', 'capacity'])
+      .where('id', '=', id)
+      .executeTakeFirstOrThrow()
+
+    expect(row).toEqual({ topic_id: null, name: null, scheduled_at: null, duration_minutes: null, capacity: null })
+  })
+
+  test('persists scheduling columns when params are given', async () => {
+    const topic = await seedTopic()
+    const scheduledAt = new Date('2026-09-01T18:00:00.000Z')
+
+    const { id } = await createSession(db, {
+      topicId: topic.id,
+      name: 'Weekly grief circle',
+      scheduledAt,
+      durationMinutes: 45,
+      capacity: 6,
+    })
+
+    const row = await db
+      .selectFrom('sessions')
+      .select(['topic_id', 'name', 'scheduled_at', 'duration_minutes', 'capacity'])
+      .where('id', '=', id)
+      .executeTakeFirstOrThrow()
+
+    expect(row.topic_id).toBe(topic.id)
+    expect(row.name).toBe('Weekly grief circle')
+    expect(row.scheduled_at).toEqual(scheduledAt)
+    expect(row.duration_minutes).toBe(45)
+    expect(row.capacity).toBe(6)
   })
 })
 
@@ -88,6 +135,26 @@ describe('joinSession', () => {
     await expect(
       joinSession(db, '00000000-0000-0000-0000-000000000000', user.id),
     ).rejects.toBeInstanceOf(SessionNotFoundError)
+  })
+
+  test('enforces a scheduled circle\'s own capacity instead of the global max', async () => {
+    const topic = await seedTopic()
+    const { id: sessionId } = await createSession(db, {
+      topicId: topic.id,
+      name: 'Small grief circle',
+      scheduledAt: new Date(),
+      durationMinutes: 30,
+      capacity: 2,
+    })
+
+    const userA = await db.insertInto('users').defaultValues().returningAll().executeTakeFirstOrThrow()
+    const userB = await db.insertInto('users').defaultValues().returningAll().executeTakeFirstOrThrow()
+    const userC = await db.insertInto('users').defaultValues().returningAll().executeTakeFirstOrThrow()
+
+    await joinSession(db, sessionId, userA.id)
+    await joinSession(db, sessionId, userB.id)
+
+    await expect(joinSession(db, sessionId, userC.id)).rejects.toBeInstanceOf(SessionFullError)
   })
 })
 
@@ -137,5 +204,549 @@ describe('turn claiming and advancing', () => {
 
     // A fresh claim should succeed after advancing, proving the claim was cleared.
     await expect(claimTurn(db, sessionId, userIds[0] as string)).resolves.toBeUndefined()
+  })
+})
+
+describe('listOpenSessions', () => {
+  test('includes forming and active scheduled circles with room left, excludes the rest', async () => {
+    const topic = await seedTopic()
+
+    const open = await createSession(db, {
+      topicId: topic.id,
+      name: 'Weekly grief circle',
+      scheduledAt: new Date('2026-09-01T18:00:00.000Z'),
+      durationMinutes: 60,
+      capacity: 4,
+    })
+
+    const full = await createSession(db, {
+      topicId: topic.id,
+      name: 'Full grief circle',
+      scheduledAt: new Date('2026-09-02T18:00:00.000Z'),
+      durationMinutes: 30,
+      capacity: 1,
+    })
+    const fullUser = await db.insertInto('users').defaultValues().returningAll().executeTakeFirstOrThrow()
+    await joinSession(db, full.id, fullUser.id)
+
+    // Ad-hoc, non-scheduled session — must never show up in the browse list.
+    await createSession(db)
+
+    const { sessions, nextCursor } = await listOpenSessions(db, { topicId: topic.id, limit: 50 })
+    const ids = sessions.map((r) => r.id)
+
+    expect(ids).toContain(open.id)
+    expect(ids).not.toContain(full.id)
+    expect(nextCursor).toBeNull()
+
+    const openResult = sessions.find((r) => r.id === open.id)
+    expect(openResult).toMatchObject({
+      status: 'forming',
+      name: 'Weekly grief circle',
+      durationMinutes: 60,
+      capacity: 4,
+      joinedCount: 0,
+      topic: { id: topic.id, slug: topic.slug, label: topic.label },
+    })
+  })
+
+  // A row created between migration 0007 (topic_id) and 0008 (name) has a
+  // topic but no name — createSession(db, params) can't produce this
+  // shape any more (name is required), so it's inserted directly to
+  // reproduce that historical state.
+  test('surfaces a null name for a scheduled circle that predates circle naming', async () => {
+    const topic = await seedTopic()
+    const row = await db
+      .insertInto('sessions')
+      .values({
+        status: 'forming',
+        topic_id: topic.id,
+        scheduled_at: new Date('2026-09-01T18:00:00.000Z'),
+        duration_minutes: 60,
+        capacity: 4,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow()
+
+    const { sessions } = await listOpenSessions(db, { topicId: topic.id, limit: 50 })
+    expect(sessions.find((r) => r.id === row.id)).toMatchObject({ name: null })
+  })
+
+  describe('filters', () => {
+    test('search matches a literal substring of the real name', async () => {
+      const topic = await seedTopic()
+      const target = await createSession(db, {
+        topicId: topic.id,
+        name: `Unique Grief Night ${crypto.randomUUID()}`,
+        scheduledAt: new Date('2026-09-01T18:00:00.000Z'),
+        durationMinutes: 60,
+        capacity: 4,
+      })
+      const other = await createSession(db, {
+        topicId: topic.id,
+        name: `Totally Different ${crypto.randomUUID()}`,
+        scheduledAt: new Date('2026-09-01T18:00:00.000Z'),
+        durationMinutes: 60,
+        capacity: 4,
+      })
+
+      const { sessions } = await listOpenSessions(db, { search: 'Grief Night', limit: 50 })
+      const ids = sessions.map((r) => r.id)
+      expect(ids).toContain(target.id)
+      expect(ids).not.toContain(other.id)
+    })
+
+    test('search matches a null-named row via its topic-derived display name', async () => {
+      const topic = await seedTopic()
+      const row = await db
+        .insertInto('sessions')
+        .values({
+          status: 'forming',
+          topic_id: topic.id,
+          scheduled_at: new Date('2026-09-01T18:00:00.000Z'),
+          duration_minutes: 60,
+          capacity: 4,
+        })
+        .returningAll()
+        .executeTakeFirstOrThrow()
+
+      const { sessions } = await listOpenSessions(db, { search: topic.label, limit: 50 })
+      expect(sessions.map((r) => r.id)).toContain(row.id)
+    })
+
+    test('a typo in the search term still matches via trigram similarity', async () => {
+      const topic = await seedTopic()
+      const marker = crypto.randomUUID().slice(0, 8)
+      const target = await createSession(db, {
+        topicId: topic.id,
+        name: `Grief Night ${marker}`,
+        scheduledAt: new Date('2026-09-01T18:00:00.000Z'),
+        durationMinutes: 60,
+        capacity: 4,
+      })
+
+      const { sessions } = await listOpenSessions(db, { search: `Greif Nite ${marker}`, limit: 50 })
+      expect(sessions.map((r) => r.id)).toContain(target.id)
+    })
+
+    test('topicId isolates circles under that topic only', async () => {
+      const topicA = await seedTopic()
+      const topicB = await seedTopic()
+      const a = await createSession(db, {
+        topicId: topicA.id,
+        name: 'Circle A',
+        scheduledAt: new Date('2026-09-01T18:00:00.000Z'),
+        durationMinutes: 60,
+        capacity: 4,
+      })
+      const b = await createSession(db, {
+        topicId: topicB.id,
+        name: 'Circle B',
+        scheduledAt: new Date('2026-09-01T18:00:00.000Z'),
+        durationMinutes: 60,
+        capacity: 4,
+      })
+
+      const { sessions } = await listOpenSessions(db, { topicId: topicA.id, limit: 50 })
+      const ids = sessions.map((r) => r.id)
+      expect(ids).toContain(a.id)
+      expect(ids).not.toContain(b.id)
+    })
+
+    test('capacity isolates circles of that exact group size', async () => {
+      const topic = await seedTopic()
+      const small = await createSession(db, {
+        topicId: topic.id,
+        name: 'Small circle',
+        scheduledAt: new Date('2026-09-01T18:00:00.000Z'),
+        durationMinutes: 60,
+        capacity: 6,
+      })
+      const large = await createSession(db, {
+        topicId: topic.id,
+        name: 'Large circle',
+        scheduledAt: new Date('2026-09-01T18:00:00.000Z'),
+        durationMinutes: 60,
+        capacity: 12,
+      })
+
+      const { sessions } = await listOpenSessions(db, { capacity: 6, limit: 50 })
+      const ids = sessions.map((r) => r.id)
+      expect(ids).toContain(small.id)
+      expect(ids).not.toContain(large.id)
+    })
+
+    test('durationMinutes: a number isolates that exact duration', async () => {
+      const topic = await seedTopic()
+      const thirty = await createSession(db, {
+        topicId: topic.id,
+        name: 'Thirty min circle',
+        scheduledAt: new Date('2026-09-01T18:00:00.000Z'),
+        durationMinutes: 30,
+        capacity: 8,
+      })
+      const sixty = await createSession(db, {
+        topicId: topic.id,
+        name: 'Sixty min circle',
+        scheduledAt: new Date('2026-09-01T18:00:00.000Z'),
+        durationMinutes: 60,
+        capacity: 8,
+      })
+
+      const { sessions } = await listOpenSessions(db, { durationMinutes: 30, limit: 50 })
+      const ids = sessions.map((r) => r.id)
+      expect(ids).toContain(thirty.id)
+      expect(ids).not.toContain(sixty.id)
+    })
+
+    test('durationMinutes: null isolates open-ended circles only', async () => {
+      const topic = await seedTopic()
+      const openEnded = await createSession(db, {
+        topicId: topic.id,
+        name: 'Open-ended circle',
+        scheduledAt: new Date('2026-09-01T18:00:00.000Z'),
+        durationMinutes: null,
+        capacity: 8,
+      })
+      const timed = await createSession(db, {
+        topicId: topic.id,
+        name: 'Timed circle',
+        scheduledAt: new Date('2026-09-01T18:00:00.000Z'),
+        durationMinutes: 45,
+        capacity: 8,
+      })
+
+      const { sessions } = await listOpenSessions(db, { durationMinutes: null, limit: 50 })
+      const ids = sessions.map((r) => r.id)
+      expect(ids).toContain(openEnded.id)
+      expect(ids).not.toContain(timed.id)
+    })
+
+    test('date isolates circles scheduled that calendar day', async () => {
+      const topic = await seedTopic()
+      const onDate = await createSession(db, {
+        topicId: topic.id,
+        name: 'On date circle',
+        scheduledAt: new Date('2026-10-05T12:00:00.000Z'),
+        durationMinutes: 60,
+        capacity: 8,
+      })
+      const otherDate = await createSession(db, {
+        topicId: topic.id,
+        name: 'Other date circle',
+        scheduledAt: new Date('2026-10-06T12:00:00.000Z'),
+        durationMinutes: 60,
+        capacity: 8,
+      })
+
+      const { sessions } = await listOpenSessions(db, { date: '2026-10-05', limit: 50 })
+      const ids = sessions.map((r) => r.id)
+      expect(ids).toContain(onDate.id)
+      expect(ids).not.toContain(otherDate.id)
+    })
+
+    test('a full circle never occupies a page slot alongside open ones', async () => {
+      const topic = await seedTopic()
+      const full = await createSession(db, {
+        topicId: topic.id,
+        name: 'Full page-slot circle',
+        scheduledAt: new Date('2026-09-01T18:00:00.000Z'),
+        durationMinutes: 60,
+        capacity: 1,
+      })
+      const fullUser = await db.insertInto('users').defaultValues().returningAll().executeTakeFirstOrThrow()
+      await joinSession(db, full.id, fullUser.id)
+
+      const open1 = await createSession(db, {
+        topicId: topic.id,
+        name: 'Open page-slot circle 1',
+        scheduledAt: new Date('2026-09-01T19:00:00.000Z'),
+        durationMinutes: 60,
+        capacity: 4,
+      })
+      const open2 = await createSession(db, {
+        topicId: topic.id,
+        name: 'Open page-slot circle 2',
+        scheduledAt: new Date('2026-09-01T20:00:00.000Z'),
+        durationMinutes: 60,
+        capacity: 4,
+      })
+
+      // Schedule mode is newest-first — open2 (20:00) sorts ahead of
+      // open1 (19:00).
+      const { sessions } = await listOpenSessions(db, { topicId: topic.id, limit: 2 })
+      expect(sessions.map((r) => r.id)).toEqual([open2.id, open1.id])
+    })
+  })
+
+  describe('cursor pagination', () => {
+    test('schedule-order pages (no search) are disjoint, newest-first, and terminate', async () => {
+      const topic = await seedTopic()
+      const created = []
+      for (let i = 0; i < 5; i++) {
+        created.push(
+          await createSession(db, {
+            topicId: topic.id,
+            name: `Paged circle ${i}`,
+            scheduledAt: new Date(2026, 10, 10 + i, 12, 0, 0),
+            durationMinutes: 60,
+            capacity: 8,
+          }),
+        )
+      }
+
+      const seen: string[] = []
+      let cursor: string | undefined
+      for (let page = 0; page < 10; page++) {
+        const result = await listOpenSessions(db, { topicId: topic.id, limit: 2, cursor })
+        seen.push(...result.sessions.map((s) => s.id))
+        if (!result.nextCursor) break
+        cursor = result.nextCursor
+      }
+
+      // Newest-scheduled first — see the listOpenSessions doc comment.
+      expect(seen).toEqual(
+        created
+          .map((c) => c.id)
+          .slice()
+          .reverse(),
+      )
+    })
+
+    // Regression test: `pg` converts timestamptz to a JS Date, which only
+    // has millisecond resolution, while Postgres itself has microsecond
+    // resolution. These four rows share the same millisecond but differ
+    // in microseconds — sorted correctly by Postgres, but if the cursor
+    // were built from a JS `Date#toISOString()` (millisecond-truncated)
+    // instead of Postgres's own exact text representation, a page
+    // boundary row would satisfy `> cursor` again on the next page and
+    // come back twice.
+    test('schedule-order pages never repeat a row when timestamps differ only in microseconds', async () => {
+      const topic = await seedTopic()
+      const microsecondSuffixes = ['100001', '100002', '100003', '100004']
+      const created = []
+      for (const suffix of microsecondSuffixes) {
+        created.push(
+          await createSession(db, {
+            topicId: topic.id,
+            name: `Microsecond circle ${suffix}`,
+            scheduledAt: `2026-11-20T12:00:00.${suffix}Z`,
+            durationMinutes: 60,
+            capacity: 8,
+          }),
+        )
+      }
+
+      const seen: string[] = []
+      let cursor: string | undefined
+      for (let page = 0; page < 10; page++) {
+        const result = await listOpenSessions(db, { topicId: topic.id, limit: 2, cursor })
+        seen.push(...result.sessions.map((s) => s.id))
+        if (!result.nextCursor) break
+        cursor = result.nextCursor
+      }
+
+      expect(seen).toEqual(
+        created
+          .map((c) => c.id)
+          .slice()
+          .reverse(),
+      )
+      expect(new Set(seen).size).toBe(seen.length)
+    })
+
+    test('relevance-order pages (search active) are disjoint and terminate', async () => {
+      const topic = await seedTopic()
+      const marker = crypto.randomUUID().slice(0, 8)
+      const created = []
+      for (let i = 0; i < 5; i++) {
+        created.push(
+          await createSession(db, {
+            topicId: topic.id,
+            name: `Relevance circle ${marker} ${i}`,
+            scheduledAt: new Date('2026-09-01T18:00:00.000Z'),
+            durationMinutes: 60,
+            capacity: 8,
+          }),
+        )
+      }
+
+      const seen = new Set<string>()
+      let cursor: string | undefined
+      let pages = 0
+      for (let page = 0; page < 10; page++) {
+        const result = await listOpenSessions(db, { search: marker, limit: 2, cursor })
+        result.sessions.forEach((s) => seen.add(s.id))
+        pages++
+        if (!result.nextCursor) break
+        cursor = result.nextCursor
+      }
+
+      expect(seen.size).toBe(created.length)
+      expect(pages).toBeGreaterThan(1)
+    })
+
+    test('direction "before" fetches the page immediately preceding a mid-sequence cursor', async () => {
+      const topic = await seedTopic()
+      const created = []
+      for (let i = 0; i < 6; i++) {
+        created.push(
+          await createSession(db, {
+            topicId: topic.id,
+            name: `Before circle ${i}`,
+            scheduledAt: new Date(2026, 11, 1 + i, 12, 0, 0),
+            durationMinutes: 60,
+            capacity: 8,
+          }),
+        )
+      }
+
+      // Newest-first: the first page is rows 5-4, then 3-2 — cursor now
+      // points at row 2 (index 2).
+      const first = await listOpenSessions(db, { topicId: topic.id, limit: 2 })
+      const second = await listOpenSessions(db, { topicId: topic.id, limit: 2, cursor: first.nextCursor! })
+
+      const before = await listOpenSessions(db, {
+        topicId: topic.id,
+        limit: 2,
+        cursor: second.prevCursor!,
+        direction: 'before',
+      })
+
+      expect(before.sessions.map((s) => s.id)).toEqual([created[5]!.id, created[4]!.id])
+      // Backed all the way up to the true start (newest end): nothing
+      // precedes it.
+      expect(before.prevCursor).toBeNull()
+      // But there's still more after (rows 3 onward, into the past) —
+      // paging back doesn't lose track of the direction the user came
+      // from.
+      expect(before.nextCursor).not.toBeNull()
+    })
+
+    test('walking forward to the end and back to the start visits every row exactly once each way', async () => {
+      const topic = await seedTopic()
+      const created = []
+      for (let i = 0; i < 7; i++) {
+        created.push(
+          await createSession(db, {
+            topicId: topic.id,
+            name: `Walk circle ${i}`,
+            scheduledAt: new Date(2026, 11, 10 + i, 9, 0, 0),
+            durationMinutes: 60,
+            capacity: 8,
+          }),
+        )
+      }
+      // Newest-first: the forward walk visits row 6 before row 0.
+      const expectedIds = created
+        .map((c) => c.id)
+        .slice()
+        .reverse()
+
+      const forward: string[] = []
+      let cursor: string | undefined
+      let lastPage = await listOpenSessions(db, { topicId: topic.id, limit: 3, cursor })
+      forward.push(...lastPage.sessions.map((s) => s.id))
+      while (lastPage.nextCursor) {
+        lastPage = await listOpenSessions(db, { topicId: topic.id, limit: 3, cursor: lastPage.nextCursor })
+        forward.push(...lastPage.sessions.map((s) => s.id))
+      }
+      expect(forward).toEqual(expectedIds)
+      expect(lastPage.nextCursor).toBeNull()
+
+      // Walk backward from wherever forward paging ended, using prevCursor.
+      const backward: string[] = []
+      let backCursor = lastPage.prevCursor
+      // The last forward page's own rows aren't re-fetched — walking
+      // "back to the first marker" means everything *before* that page.
+      backward.unshift(...lastPage.sessions.map((s) => s.id))
+      while (backCursor) {
+        const page = await listOpenSessions(db, { topicId: topic.id, limit: 3, cursor: backCursor, direction: 'before' })
+        backward.unshift(...page.sessions.map((s) => s.id))
+        backCursor = page.prevCursor
+      }
+
+      expect(backward).toEqual(expectedIds)
+      expect(new Set(backward).size).toBe(expectedIds.length)
+    })
+
+    // The frontend's initial fetch (useOpenSessions in shared.tsx)
+    // doesn't pass an empty cursor — it synthesizes a schedule cursor for
+    // "now" so the browse list opens anchored at the present rather than
+    // at the single furthest-future circle in the dataset. This is a
+    // plain schedule cursor like any other; nothing in listOpenSessions
+    // needs to know it's synthetic.
+    test('a synthetic "now" cursor anchors the browse list at the present', async () => {
+      const topic = await seedTopic()
+      const past = await createSession(db, {
+        topicId: topic.id,
+        name: 'Already past',
+        scheduledAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+        durationMinutes: 60,
+        capacity: 8,
+      })
+      const future = await createSession(db, {
+        topicId: topic.id,
+        name: 'Still upcoming',
+        scheduledAt: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000),
+        durationMinutes: 60,
+        capacity: 8,
+      })
+
+      const nowCursor = `schedule|${new Date().toISOString()}|00000000-0000-0000-0000-000000000000`
+      const initial = await listOpenSessions(db, { topicId: topic.id, limit: 50, cursor: nowCursor, direction: 'after' })
+
+      expect(initial.sessions.map((s) => s.id)).toEqual([past.id])
+      expect(initial.prevCursor).not.toBeNull()
+
+      const upward = await listOpenSessions(db, {
+        topicId: topic.id,
+        limit: 50,
+        cursor: initial.prevCursor!,
+        direction: 'before',
+      })
+      expect(upward.sessions.map((s) => s.id)).toEqual([future.id])
+    })
+
+    test('backward relevance-mode paging round-trips the same way', async () => {
+      const topic = await seedTopic()
+      const marker = crypto.randomUUID().slice(0, 8)
+      const created = []
+      for (let i = 0; i < 6; i++) {
+        created.push(
+          await createSession(db, {
+            topicId: topic.id,
+            name: `Relevance walk ${marker} ${i}`,
+            scheduledAt: new Date('2026-09-01T18:00:00.000Z'),
+            durationMinutes: 60,
+            capacity: 8,
+          }),
+        )
+      }
+      // Relevance order isn't creation order — each row's trigram
+      // similarity to `marker` can differ slightly even though they're
+      // all near-identical strings — so the ground truth here is
+      // whatever order the forward walk itself establishes, not
+      // insertion order. What backward paging must reproduce is exactly
+      // that established order, and exactly that set of rows.
+      const forward: string[] = []
+      let lastPage = await listOpenSessions(db, { search: marker, limit: 2 })
+      forward.push(...lastPage.sessions.map((s) => s.id))
+      while (lastPage.nextCursor) {
+        lastPage = await listOpenSessions(db, { search: marker, limit: 2, cursor: lastPage.nextCursor })
+        forward.push(...lastPage.sessions.map((s) => s.id))
+      }
+      expect(new Set(forward)).toEqual(new Set(created.map((c) => c.id)))
+
+      const backward: string[] = [...lastPage.sessions.map((s) => s.id)]
+      let backCursor = lastPage.prevCursor
+      while (backCursor) {
+        const page = await listOpenSessions(db, { search: marker, limit: 2, cursor: backCursor, direction: 'before' })
+        backward.unshift(...page.sessions.map((s) => s.id))
+        backCursor = page.prevCursor
+      }
+
+      expect(backward).toEqual(forward)
+    })
   })
 })

@@ -21,6 +21,15 @@ export interface SessionsTable {
   ended_at: NullableTimestamp
   current_turn_user_id: string | null
   turn_claimed_at: NullableTimestamp
+  // Nullable: only populated for circles created through the scheduled
+  // /start/new flow — the pre-existing ad-hoc turn-based flow leaves all
+  // five null. See migrations/0007_circle_scheduling.ts and
+  // migrations/0008_circle_name.ts.
+  topic_id: string | null
+  scheduled_at: NullableTimestamp
+  duration_minutes: number | null
+  capacity: number | null
+  name: string | null
 }
 
 export interface SessionUsersTable {
@@ -81,6 +90,15 @@ export interface UserProfilesTable {
   created_at: Timestamp
 }
 
+export interface TopicsTable {
+  id: Generated<string>
+  slug: string
+  label: string
+  sort_order: Generated<number>
+  is_active: Generated<boolean>
+  created_at: Timestamp
+}
+
 export interface Database {
   users: UsersTable
   sessions: SessionsTable
@@ -90,4 +108,5 @@ export interface Database {
   feedback_ratings: FeedbackRatingsTable
   user_identities: UserIdentitiesTable
   user_profiles: UserProfilesTable
+  topics: TopicsTable
 }

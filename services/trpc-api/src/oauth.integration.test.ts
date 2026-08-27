@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { createDb, createPgPool, createSessionToken, runMigrations } from '@mincirklen/shared'
+import { DEFAULT_LOCAL_DATABASE_URL, createDb, createPgPool, createSessionToken, runMigrations } from '@mincirklen/shared'
 import type { Redis } from 'ioredis'
 import type { NatsConnection } from 'nats'
 import { generateKeyPairSync, sign as signData } from 'node:crypto'
@@ -17,7 +17,7 @@ function hashSubject(subject: string): string {
 }
 
 const pool = createPgPool(
-  process.env.TEST_DATABASE_URL ?? 'postgres://mincirklen:mincirklen@localhost:5433/mincirklen',
+  process.env.TEST_DATABASE_URL ?? DEFAULT_LOCAL_DATABASE_URL,
   'test',
 )
 const db = createDb(pool)

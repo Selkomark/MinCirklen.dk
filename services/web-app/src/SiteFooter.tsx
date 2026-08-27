@@ -1,6 +1,6 @@
 import { Footer, FooterColumn } from './components/Footer'
 import { publicPagePath } from './publicPages/pages'
-import { newSessionPath, moderationTransparencyPath } from './App'
+import { startPath, moderationTransparencyPath } from './App'
 import { showCookiePreferences } from './CookieConsentBanner'
 
 export function SiteFooter() {
@@ -21,7 +21,7 @@ export function SiteFooter() {
       }
     >
       <FooterColumn title="Product">
-        <a href={newSessionPath()}>Circles</a>
+        <a href={startPath()}>Circles</a>
         <a href={publicPagePath('how-it-works')}>How it works</a>
         <a href={publicPagePath('pricing')}>Pricing</a>
         <a href={publicPagePath('safety-and-moderation')}>Safety</a>

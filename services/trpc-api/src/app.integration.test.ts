@@ -1,12 +1,12 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { createDb, createPgPool, runMigrations } from '@mincirklen/shared'
+import { DEFAULT_LOCAL_DATABASE_URL, createDb, createPgPool, runMigrations } from '@mincirklen/shared'
 import type { Redis } from 'ioredis'
 import type { NatsConnection } from 'nats'
 import { createApp } from './app'
 import { linkIdentity } from './repositories/userIdentityRepository'
 
 const pool = createPgPool(
-  process.env.TEST_DATABASE_URL ?? 'postgres://mincirklen:mincirklen@localhost:5433/mincirklen',
+  process.env.TEST_DATABASE_URL ?? DEFAULT_LOCAL_DATABASE_URL,
   'test',
 )
 const db = createDb(pool)

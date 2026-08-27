@@ -4,7 +4,9 @@ import { ToastRegionRoot } from './components/Toast'
 import { Catalog } from './Catalog'
 import { LandingPage } from './LandingPage'
 import { DashboardPage } from './pages/DashboardPage'
-import { NewSessionPage } from './pages/NewSessionPage'
+import { StartPage } from './pages/start/StartPage'
+import { StartJoinPage } from './pages/start/StartJoinPage'
+import { StartNewPage } from './pages/start/StartNewPage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { ModerationTransparencyPage } from './pages/ModerationTransparencyPage'
@@ -17,22 +19,20 @@ const BASE = import.meta.env.BASE_URL
 
 export const landingPath = () => BASE
 export const systemDesignPath = () => `${BASE}system-design`
-export const newSessionPath = () => `${BASE}new`
+export const startPath = () => `${BASE}start`
+export const startJoinPath = () => `${BASE}start/join`
+export const startNewPath = () => `${BASE}start/new`
 export const dashboardPath = (sessionId: string) => `${BASE}s/${sessionId}`
 export const loginPath = () => `${BASE}login`
 export const registerPath = () => `${BASE}register`
 export const moderationTransparencyPath = () => `${BASE}moderation-transparency`
 
-export function newSessionId() {
-  return typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `${Date.now()}-${Math.random().toString(16).slice(2)}`
-}
-
 type Route =
   | { name: 'landing' }
   | { name: 'system-design' }
-  | { name: 'new-session' }
+  | { name: 'start' }
+  | { name: 'start-join' }
+  | { name: 'start-new' }
   | { name: 'dashboard'; sessionId: string }
   | { name: 'public-page'; id: PublicPageId }
   | { name: 'login' }
@@ -45,7 +45,7 @@ type Route =
 // shadowing a real app route (or vice versa) — checked at module load below, not just here.
 const RESERVED_TOP_LEVEL_SEGMENTS = [
   'system-design',
-  'new',
+  'start',
   's',
   'login',
   'register',
@@ -71,16 +71,25 @@ function parseRoute(pathname: string): Route {
   const rest = pathname.slice(BASE.length)
 
   if (rest === '' || rest === '/') return { name: 'landing' }
-  if (rest.replace(/\/$/, '') === 'system-design') return { name: 'system-design' }
-  if (rest.replace(/\/$/, '') === 'new') return { name: 'new-session' }
-  if (rest.replace(/\/$/, '') === 'login') return { name: 'login' }
-  if (rest.replace(/\/$/, '') === 'register') return { name: 'register' }
-  if (rest.replace(/\/$/, '') === 'moderation-transparency') return { name: 'moderation-transparency' }
 
-  const sessionMatch = rest.match(/^s\/([^/]+)\/?$/)
+  // Stripped once up front rather than re-running a regex replace per
+  // candidate below — every branch needs the same trailing slash gone,
+  // and a plain endsWith/slice is both cheaper and clearer than a regex
+  // for that.
+  const normalized = rest.endsWith('/') ? rest.slice(0, -1) : rest
+
+  if (normalized === 'system-design') return { name: 'system-design' }
+  if (normalized === 'start') return { name: 'start' }
+  if (normalized === 'start/join') return { name: 'start-join' }
+  if (normalized === 'start/new') return { name: 'start-new' }
+  if (normalized === 'login') return { name: 'login' }
+  if (normalized === 'register') return { name: 'register' }
+  if (normalized === 'moderation-transparency') return { name: 'moderation-transparency' }
+
+  const sessionMatch = normalized.match(/^s\/([^/]+)$/)
   if (sessionMatch) return { name: 'dashboard', sessionId: sessionMatch[1] }
 
-  const pageMatch = rest.match(/^([a-z0-9-]+)\/?$/)
+  const pageMatch = normalized.match(/^([a-z0-9-]+)$/)
   const pageId = pageMatch?.[1] as PublicPageId | undefined
   if (pageId && pageId in PUBLIC_PAGES) return { name: 'public-page', id: pageId }
 
@@ -157,11 +166,12 @@ function useAuthStatus(gateKey: string | null): AuthStatus {
   return state.key === gateKey ? state.status : { kind: 'loading' }
 }
 
-// Sensitive routes: real support-circle content (new-session, dashboard)
-// and PII collection (register) — every one of these has a matching
-// protectedProcedure on the backend (see controllers/trpc.ts), this is the
-// UI-side half of the same gate, not a replacement for it.
-const GATED_ROUTE_NAMES = new Set(['login', 'register', 'new-session', 'dashboard'])
+// Sensitive routes: real support-circle content (start, start-join,
+// start-new, dashboard) and PII collection (register) — every one of
+// these has a matching protectedProcedure on the backend (see
+// controllers/trpc.ts), this is the UI-side half of the same gate, not a
+// replacement for it.
+const GATED_ROUTE_NAMES = new Set(['login', 'register', 'start', 'start-join', 'start-new', 'dashboard'])
 
 function useRoute() {
   const [pathname, setPathname] = useState(() => window.location.pathname)
@@ -193,7 +203,7 @@ function Shell() {
 
     if (route.name === 'login') {
       if (authStatus.kind === 'needs-profile') navigate(registerPath())
-      else if (authStatus.kind === 'verified') navigate(newSessionPath())
+      else if (authStatus.kind === 'verified') navigate(startPath())
       return
     }
 
@@ -201,11 +211,11 @@ function Shell() {
       // A user who already has a profile has nothing to do here — send
       // them on, don't re-show the registration form.
       if (authStatus.kind === 'anonymous') navigate(loginPath())
-      else if (authStatus.kind === 'verified') navigate(newSessionPath())
+      else if (authStatus.kind === 'verified') navigate(startPath())
       return
     }
 
-    if (route.name === 'new-session' || route.name === 'dashboard') {
+    if (route.name === 'start' || route.name === 'start-join' || route.name === 'start-new' || route.name === 'dashboard') {
       if (authStatus.kind === 'anonymous') {
         navigate(loginPath())
       } else if (authStatus.kind === 'needs-profile') {
@@ -233,12 +243,18 @@ function Shell() {
         {route.name === 'system-design' && <Catalog />}
         {route.name === 'landing' && <LandingPage />}
         {route.name === 'dashboard' && authStatus.kind === 'verified' && <DashboardPage />}
-        {route.name === 'new-session' && authStatus.kind === 'verified' && (
-          <NewSessionPage onComplete={() => navigate(dashboardPath(newSessionId()))} />
+        {route.name === 'start' && authStatus.kind === 'verified' && (
+          <StartPage onChooseJoin={() => navigate(startJoinPath())} onChooseNew={() => navigate(startNewPath())} />
+        )}
+        {route.name === 'start-join' && authStatus.kind === 'verified' && (
+          <StartJoinPage onBack={() => navigate(startPath())} onComplete={(sessionId) => navigate(dashboardPath(sessionId))} />
+        )}
+        {route.name === 'start-new' && authStatus.kind === 'verified' && (
+          <StartNewPage onBack={() => navigate(startPath())} onComplete={(sessionId) => navigate(dashboardPath(sessionId))} />
         )}
         {route.name === 'login' && authStatus.kind === 'anonymous' && <LoginPage />}
         {route.name === 'register' && authStatus.kind === 'needs-profile' && (
-          <RegisterPage onComplete={() => navigate(newSessionPath())} />
+          <RegisterPage onComplete={() => navigate(startPath())} />
         )}
       </div>
       <ToastRegionRoot />

@@ -7,11 +7,12 @@ import { FileMigrationProvider, Migrator, NO_MIGRATIONS, sql } from 'kysely'
 import { Pool } from 'pg'
 import { createDb } from './kysely'
 import { runCliMigration, runMigrations } from './migrate'
+import { DEFAULT_LOCAL_DATABASE_URL } from './pool'
 
 const REAL_MIGRATION_FOLDER = path.resolve(import.meta.dir, '..', '..', 'migrations')
 const SCHEMA = 'test'
 
-const ADMIN_URL = process.env.DATABASE_URL ?? 'postgres://mincirklen:mincirklen@localhost:5433/mincirklen'
+const ADMIN_URL = process.env.DATABASE_URL ?? DEFAULT_LOCAL_DATABASE_URL
 const TEST_DB_NAME = 'mincirklen_migrate_test_tmp'
 
 function connectionStringFor(dbName: string): string {

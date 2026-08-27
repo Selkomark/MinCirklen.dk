@@ -1,10 +1,10 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { createDb, createPgPool, runMigrations } from '@mincirklen/shared'
+import { DEFAULT_LOCAL_DATABASE_URL, createDb, createPgPool, runMigrations } from '@mincirklen/shared'
 import { createSession, joinSession } from './sessionRepository'
 import { insertModerationEvent } from './moderationEventRepository'
 
 const pool = createPgPool(
-  process.env.TEST_DATABASE_URL ?? 'postgres://mincirklen:mincirklen@localhost:5433/mincirklen',
+  process.env.TEST_DATABASE_URL ?? DEFAULT_LOCAL_DATABASE_URL,
   'test',
 )
 const db = createDb(pool)

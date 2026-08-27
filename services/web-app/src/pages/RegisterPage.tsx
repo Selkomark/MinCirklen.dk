@@ -28,12 +28,7 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   const canSubmit =
-    firstName.trim() !== '' &&
-    lastName.trim() !== '' &&
-    country != null &&
-    mobile.trim() !== '' &&
-    termsChecked &&
-    !isSubmitting
+    firstName.trim() !== '' && lastName.trim() !== '' && country != null && mobile.trim() !== '' && termsChecked
 
   async function handleSubmit() {
     setSubmitError(null)
@@ -167,8 +162,8 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
 
             {submitError && <Alert variant="urgent">{submitError}</Alert>}
 
-            <Button variant="safe" isDisabled={!canSubmit} onPress={handleSubmit} style={{ width: '100%' }}>
-              {isSubmitting ? 'Saving…' : 'Complete registration'}
+            <Button variant="safe" isPending={isSubmitting} isDisabled={!canSubmit} onPress={handleSubmit} style={{ width: '100%' }}>
+              Complete registration
             </Button>
           </div>
         </div>

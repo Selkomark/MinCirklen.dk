@@ -1,10 +1,10 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { createDb, createPgPool, runMigrations } from '@mincirklen/shared'
+import { DEFAULT_LOCAL_DATABASE_URL, createDb, createPgPool, runMigrations } from '@mincirklen/shared'
 import { getSessionState, joinSession, createSession as createSessionRepo } from './sessionRepository'
 import { insertMessage, listMessages, recordFlaggedMessage, recordPassedMessage } from './messageRepository'
 
 const pool = createPgPool(
-  process.env.TEST_DATABASE_URL ?? 'postgres://mincirklen:mincirklen@localhost:5433/mincirklen',
+  process.env.TEST_DATABASE_URL ?? DEFAULT_LOCAL_DATABASE_URL,
   'test',
 )
 const db = createDb(pool)
