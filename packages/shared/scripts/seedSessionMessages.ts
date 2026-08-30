@@ -1,6 +1,6 @@
 // One-off dev script — not part of the coverage-checked source tree, not
 // shipped code. Injects realistic test data into a session's message
-// history so scroll-up-for-older-messages pagination (DashboardPage.tsx)
+// history so scroll-up-for-older-messages pagination (SessionPage.tsx)
 // can be exercised against something bigger than a handful of manually
 // typed messages.
 //

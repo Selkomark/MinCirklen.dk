@@ -10,6 +10,7 @@ import { useTranslation } from 'react-i18next'
 export interface AccountProfile {
   firstName: string
   lastName: string
+  gender: string
   country: string
   mobileNumber: string
   stayAnonymous: boolean
@@ -40,6 +41,20 @@ export function usePreferences(): PreferencesContextValue {
 }
 
 const SYSTEM_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone
+
+// Module-level, not component state — deliberately survives
+// PreferencesProvider being unmounted and remounted mid-session. App.tsx's
+// Shell drops this provider for one render whenever `gateKey` changes
+// (switching between /start, /s/:id, /start/join, /start/new — see
+// useAuthStatus's key-mismatch fallback to `{ kind: 'loading' }`), which
+// remounts this component and would otherwise re-run the sync effect
+// below on every such navigation — silently reverting a language the
+// user picked live via the header switcher back to whatever's saved in
+// their profile. Applying the saved preference once per real page load
+// (this flag only resets on an actual reload, e.g. after logout's hard
+// navigation) is the intended behavior; reapplying it on every remount
+// isn't.
+let hasSyncedLanguageFromProfile = false
 
 // Mounted once per verified session (App.tsx's Shell, alongside
 // SessionSocketProvider) — the single fetch of auth.myProfile that
@@ -73,13 +88,17 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     }
   }, [refetchNonce])
 
-  // The user's stored language preference is authoritative once loaded —
+  // The user's stored language preference is authoritative on first load —
   // overrides whatever the browser-language detector guessed for this
   // session. A null preference (never set) leaves the detector's guess in
-  // place rather than forcing a language.
+  // place rather than forcing a language. Only ever applied once (see
+  // hasSyncedLanguageFromProfile above) — after that, the header
+  // switcher and the Preferences panel's own explicit changeLanguage()
+  // call are the only things allowed to change the active language.
   useEffect(() => {
-    if (profile?.language && profile.language !== i18n.language) {
-      void i18n.changeLanguage(profile.language)
+    if (profile?.language && !hasSyncedLanguageFromProfile) {
+      hasSyncedLanguageFromProfile = true
+      if (profile.language !== i18n.language) void i18n.changeLanguage(profile.language)
     }
   }, [profile?.language, i18n])
 

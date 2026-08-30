@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useSessionSocket } from '../SessionSocketProvider'
-import type { MessageFrame, OnlineUsersFrame, ParticipantJoinedFrame, RosterUpdateFrame, SessionFrame } from '../sessionSocketTypes'
+import type {
+  MemberProfileUpdatedFrame,
+  MessageFrame,
+  OnlineUsersFrame,
+  ParticipantJoinedFrame,
+  RosterUpdateFrame,
+  SessionFrame,
+} from '../sessionSocketTypes'
 
 export interface Topic {
   id: string
@@ -105,9 +112,17 @@ export function agreeToGuidelines(sessionId: string): Promise<{ agreed: true }> 
   return postTrpc('session.agreeToGuidelines', { sessionId })
 }
 
+// ReportSessionModal's submit — postTrpc's generic error mapping is fine
+// here (unlike skipTurn's SkipTurnNotYourTurnError case above), since a
+// 403 can't happen through the modal's normal flow: aboutUserIds only
+// ever comes from the caller's own already-fetched roster.
+export function submitSessionReport(sessionId: string, aboutUserIds: string[], body: string): Promise<{ status: 'submitted' }> {
+  return postTrpc('session.report', { sessionId, aboutUserIds, body })
+}
+
 // Thrown specifically for a 403 — the turn isn't (or is no longer) the
 // caller's to skip. Distinguished from a generic failure so
-// DashboardPage.tsx's autoSkipTurn can tell "someone/something else
+// SessionPage.tsx's autoSkipTurn can tell "someone/something else
 // already handled this exact turn" (e.g. the same account open in two
 // tabs, both racing their own local countdown — one wins, the other
 // correctly 403s) apart from a real failure worth alarming the user
@@ -126,7 +141,7 @@ export class SkipTurnNotYourTurnError extends Error {
 // TurnAlreadyClaimedError (SessionFullError's CONFLICT is join-only, an
 // unreachable cause here), so a 409 from this specific call always means
 // "someone/something else already handled this exact turn", never a
-// real failure. Distinguished so DashboardPage.tsx's sendNow can treat
+// real failure. Distinguished so SessionPage.tsx's sendNow can treat
 // it the same quiet way autoSkipTurn already treats its own case.
 export class SendMessageConflictError extends Error {
   constructor() {
@@ -182,7 +197,7 @@ export function useWhoAmI(): { userId: string | null; loading: boolean } {
 // not an open-ended browse surface.
 const SEARCH_DEBOUNCE_MS = 1000
 
-// `refreshKey` (DashboardPage.tsx bumps a nonce via SessionCenterPanel's
+// `refreshKey` (SessionPage.tsx bumps a nonce via SessionCenterPanel's
 // onVisited, once a visit is actually recorded server-side — not on
 // every sessionId change, which would race ahead of the visit call and
 // refetch a stale sort order) triggers a silent background refetch when
@@ -192,7 +207,7 @@ const SEARCH_DEBOUNCE_MS = 1000
 // sidebar the user is still looking at. A search edit is the only thing
 // that should visibly reload the list.
 export function useRecentVisits(search: string, refreshKey: string) {
-  const { t } = useTranslation('dashboard')
+  const { t } = useTranslation('session')
   const [visits, setVisits] = useState<RecentVisit[]>([])
   const [loadingInitial, setLoadingInitial] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -300,6 +315,14 @@ export function useRecentVisits(search: string, refreshKey: string) {
 export interface RosterEntry {
   userId: string
   turnOrder: number
+  // First name, resolved fresh from this member's current profile on
+  // every session.getState call — null means "show as anonymous" (either
+  // they have stay_anonymous on, or no completed profile). See trpc-api's
+  // userProfileRepository.ts's findDisplayNames. The live roster-update
+  // WS frame (below) never carries this — only getState does — so the
+  // handler for that frame merges by userId instead of replacing the
+  // roster outright, to avoid clobbering it back to null between polls.
+  displayName: string | null
 }
 
 export interface SessionState {
@@ -320,6 +343,10 @@ export interface ChatMessage {
   sessionId: string
   userId: string
   body: string
+  // 'system' rows are synthetic events (e.g. a join notice) — rendered as
+  // an inline system-message line rather than a real chat bubble. See
+  // trpc-api's messageRepository.ts and migrations/0001_init.ts.
+  type: 'user' | 'system'
   createdAt: string
 }
 
@@ -334,8 +361,8 @@ export type SendOutcome = { status: 'sent' } | { status: 'held' } | { status: 'c
 // Safety-net polling only now — live updates come from the persistent
 // WebSocket connection held by SessionSocketProvider (websocket-service
 // relays chat messages and roster/turn/join events onto that same
-// socket; see redisTurnStateAdapter.ts / internalController.ts on that
-// side). This just self-heals from a missed event during a connection
+// socket; see redisTurnStateAdapter.ts / rpcServer.ts on that side). This
+// just self-heals from a missed event during a connection
 // gap (a full reconnect-with-resync pass is a later piece of work), so
 // it can be far less frequent than the old poll-only design's 3s.
 const FALLBACK_POLL_INTERVAL_MS = 20000
@@ -381,13 +408,13 @@ function mergeLatestMessages(prev: ChatMessage[], fetched: ChatMessage[]): ChatM
 // actually joined (still mid guidelines-check) would just 403 repeatedly.
 // Pass `enabled: false` until the session is confirmed joined and gated.
 export function useSessionChat(sessionId: string, enabled: boolean) {
-  const { t } = useTranslation('dashboard')
+  const { t } = useTranslation('session')
   const { subscribeSession, subscribeReconnect } = useSessionSocket()
   const [state, setState] = useState<SessionState | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  // The most recent participant-joined event, for a caller (DashboardPage)
+  // The most recent participant-joined event, for a caller (SessionPage)
   // to surface as a toast — a new object identity every time so the same
   // userId joining twice in a row still triggers a fresh effect run.
   // Carries turnOrder directly (not just userId) so a caller can label
@@ -410,7 +437,7 @@ export function useSessionChat(sessionId: string, enabled: boolean) {
   // Bumped only when loadOlderMessages prepends a page — never for a live
   // WS append or a fallback-poll merge (both only ever affect the bottom
   // of the list, which never needs scroll compensation). Consumed by
-  // DashboardPage.tsx's useScrollShiftCompensation.
+  // SessionPage.tsx's useScrollShiftCompensation.
   const [messagesTopShiftVersion, setMessagesTopShiftVersion] = useState(0)
   // false = the next refresh() for this session is its first load (full
   // replace); true = every later tick is a merge-only reconcile. Reset on
@@ -420,7 +447,7 @@ export function useSessionChat(sessionId: string, enabled: boolean) {
   // handleFrame's 'message' case below. Without this, the WS echo of a
   // message this tab just sent can arrive (and get rendered) before
   // send()'s own promise resolves, so the UI shows the message while the
-  // composer still reads as "sending" (DashboardPage.tsx's isSending).
+  // composer still reads as "sending" (SessionPage.tsx's isSending).
   // Sends are turn-gated (only the current holder can send), so there's
   // never a genuine *other* message that could be wrongly suppressed by
   // this — the only message that can possibly arrive while this is true
@@ -499,14 +526,36 @@ export function useSessionChat(sessionId: string, enabled: boolean) {
         const payload = (frame as MessageFrame).payload
         setMessages((prev) => (prev.some((m) => m.id === payload.id) ? prev : [...prev, payload]))
       } else if (frame.type === 'roster-update') {
-        const { currentTurnUserId, roster } = frame as RosterUpdateFrame
-        setState((prev) => (prev ? { ...prev, currentTurnUserId, roster } : prev))
+        // The WS frame only ever carries { userId, turnOrder } — it comes
+        // from websocket-service/Redis, which has no idea about profile
+        // data (see RosterEntry's doc comment above). Merging by userId
+        // instead of replacing the array outright preserves each
+        // existing member's displayName (last resolved by session.getState)
+        // until the next poll/refetch catches up; a brand-new member from
+        // this same frame just starts out anonymous (null) until then.
+        const { currentTurnUserId, roster: incoming } = frame as RosterUpdateFrame
+        setState((prev) => {
+          if (!prev) return prev
+          const prevByUserId = new Map(prev.roster.map((r) => [r.userId, r]))
+          const roster = incoming.map((r) => ({ ...r, displayName: prevByUserId.get(r.userId)?.displayName ?? null }))
+          return { ...prev, currentTurnUserId, roster }
+        })
       } else if (frame.type === 'participant-joined') {
         const { userId, turnOrder } = frame as ParticipantJoinedFrame
         setLastJoinedEvent({ userId, turnOrder })
       } else if (frame.type === 'online-users-changed') {
         const { userIds } = frame as OnlineUsersFrame
         setState((prev) => (prev ? { ...prev, onlineUserIds: userIds } : prev))
+      } else if (frame.type === 'member-profile-updated') {
+        // Patches just this one roster entry in place — see
+        // MemberProfileUpdatedFrame's doc comment (sessionSocketTypes.ts)
+        // for why this is what makes a profile save (including turning
+        // "stay anonymous" back on) show up for other viewers immediately
+        // instead of on their next ~20s poll.
+        const { userId, displayName } = frame as MemberProfileUpdatedFrame
+        setState((prev) =>
+          prev ? { ...prev, roster: prev.roster.map((r) => (r.userId === userId ? { ...r, displayName } : r)) } : prev,
+        )
       }
     }
 
@@ -571,7 +620,7 @@ const TURN_INACTIVITY_DELAY_MS = 3000
 // The countdown itself, once it appears.
 const TURN_COUNTDOWN_SECONDS = 10
 
-// Drives DashboardPage.tsx's turn-inactivity countdown: pauses (hides)
+// Drives SessionPage.tsx's turn-inactivity countdown: pauses (hides)
 // while the holder is actively typing, starts a fresh
 // TURN_COUNTDOWN_SECONDS-second countdown after
 // TURN_INACTIVITY_DELAY_MS of silence, and calls `onExpire` if it ever
@@ -594,7 +643,7 @@ const TURN_COUNTDOWN_SECONDS = 10
 //
 // `enabled` should be `isYourTurn && <input is actually usable>` — the
 // same guard the composer's own disabled state already uses, not just
-// isYourTurn alone (see DashboardPage.tsx).
+// isYourTurn alone (see SessionPage.tsx).
 export function useTurnCountdown(enabled: boolean, draft: string, onExpire: () => void): number | null {
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null)
   const inactivityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)

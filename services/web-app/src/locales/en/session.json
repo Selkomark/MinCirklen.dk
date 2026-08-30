@@ -52,6 +52,7 @@
     "describePlaceholder": "Describe what happened...",
     "cancel": "Cancel",
     "submitted": "Report about {{about}} submitted — a moderator will review it.",
+    "submitError": "Something went wrong submitting your report. Please try again.",
     "submit": "Submit report"
   },
   "newSessionModal": {
@@ -61,17 +62,22 @@
     "createTab": "Start a circle"
   },
   "accountModal": {
+    "back": "Back",
     "profile": "Profile",
     "profileUnavailable": "Your profile isn't available right now.",
     "firstName": "First name",
     "lastName": "Last name",
+    "gender": "Gender",
+    "genderPlaceholder": "Select your gender",
+    "gender_male": "Male",
+    "gender_female": "Female",
+    "gender_other": "Other",
     "country": "Country",
     "countryPlaceholder": "Select your country",
     "mobileNumber": "Mobile number",
     "mobileHint": "Mobile number is used only for account safety — never shown in a circle.",
     "stayAnonymous": "Stay anonymous in circles",
     "stayAnonymousHint": "Other users see \"Anonymous,\" not your name",
-    "settings": "Settings",
     "appearance": "Appearance",
     "appearanceHint": "Switch between light and dark",
     "privacyNote": "Your name and contact details are encrypted at rest and never shown to other members — circles only ever see an anonymous label unless you've chosen to show your name.",
@@ -84,7 +90,6 @@
   },
   "status": {
     "ended": "This session has ended",
-    "anonymousByDefault": "Anonymous by default",
     "startsAt": "Starts {{time}} · anonymous by default"
   },
   "emptyState": {
@@ -108,16 +113,23 @@
     "showOfflineParticipants_other": "Show {{count}} offline participants",
     "notCurrentlyOnline": "Not currently online",
     "userCount_one": "{{count}} user",
-    "userCount_other": "{{count}} users"
+    "userCount_other": "{{count}} users",
+    "participantsButton_one": "Participants, {{count}} online",
+    "participantsButton_other": "Participants, {{count}} online",
+    "onlineSectionLabel": "Online",
+    "offlineToggle_one": "Offline ({{count}})",
+    "offlineToggle_other": "Offline ({{count}})",
+    "participantsTitle": "Participants",
+    "closeParticipants": "Close"
   },
   "composer": {
+    "memberJoined": "{{name}} joined the circle",
     "newMessages_one": "{{count}} new message",
     "newMessages_other": "{{count}} new messages",
     "sendingIn": "Sending in {{count}}s",
     "skippingIn": "Skipping in {{count}}s",
     "keepTypingToPause": "keep typing to pause",
-    "placeholderYourTurn": "Share when it's your turn",
-    "placeholderWaiting": "Type your message — sends once the floor is yours",
+    "placeholder": "Type...",
     "send": "Send",
     "sendOptions": "Send options",
     "autoSendToggle": "Auto-send when time runs out",
@@ -146,7 +158,6 @@
     "agreementFailed": "Something went wrong recording your agreement. Please try again.",
     "messageHeld": "Your message was held for review and was not sent to the circle.",
     "sendFailed": "Something went wrong sending that message.",
-    "turnSkipped": "No response — your turn was skipped.",
     "skipFailed": "Something went wrong skipping your turn.",
     "recentSessionsLoadFailed": "Could not load recent sessions",
     "moreRecentSessionsLoadFailed": "Could not load more sessions",

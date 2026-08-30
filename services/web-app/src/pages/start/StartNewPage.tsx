@@ -17,7 +17,7 @@ import { Chip, DURATIONS, SIZES, StepBar, durationLabel, useTopics } from './sha
 export interface StartNewPageProps {
   onBack: () => void
   onComplete: (sessionId: string) => void
-  // DashboardPage.tsx's "New session" opens this same flow in a Modal
+  // SessionPage.tsx's "New session" opens this same flow in a Modal
   // (alongside StartJoinPage, as a second tab) instead of navigating to
   // the /start/new route — embedded skips the full-page chrome
   // (SiteHeader/SiteFooter, the centered/padded page wrapper) and just
@@ -32,7 +32,7 @@ function combineToISOString(date: CalendarDate, time: Time): string {
 
 export function StartNewPage({ onBack, onComplete, embedded = false }: StartNewPageProps) {
   const { t } = useTranslation('start')
-  useDocumentTitle('Start a new circle — MinCirklen')
+  useDocumentTitle(t('newPage.documentTitle'))
 
   const { topics, loading: topicsLoading, error: topicsError } = useTopics()
 
@@ -140,6 +140,7 @@ export function StartNewPage({ onBack, onComplete, embedded = false }: StartNewP
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                     <DatePicker
                       aria-label={t('newPage.date')}
+                      openCalendarLabel={t('shared.openCalendar')}
                       value={createDate}
                       onChange={setCreateDate}
                       minValue={today(getLocalTimeZone())}

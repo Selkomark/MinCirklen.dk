@@ -24,7 +24,12 @@ export function addToast(title: string, options?: { variant?: ToastVariant; time
   )
 }
 
-export function ToastRegionRoot() {
+// `dismissLabel` isn't translated internally — this component is shared
+// with the (English-only) design system Catalog, which mounts its own
+// `<ToastRegionRoot />` with no i18next instance initialized. The real
+// app's mount point (App.tsx) passes its own translated string; Catalog
+// keeps the English default.
+export function ToastRegionRoot({ dismissLabel = 'Dismiss' }: { dismissLabel?: string } = {}) {
   return (
     <ToastRegion queue={toastQueue} className="ds-toast-region">
       {({ toast }) => (
@@ -32,7 +37,7 @@ export function ToastRegionRoot() {
           <ToastContent className="ds-toast__content">
             <Text slot="title">{toast.content.title}</Text>
           </ToastContent>
-          <Button slot="close" className="ds-toast__close" aria-label="Dismiss">
+          <Button slot="close" className="ds-toast__close" aria-label={dismissLabel}>
             ✕
           </Button>
         </RACToast>

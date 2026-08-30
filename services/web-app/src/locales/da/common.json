@@ -1,14 +1,17 @@
 {
   "toggleTheme": "Skift tema",
+  "language": "Sprog",
+  "toast": {
+    "dismiss": "Luk"
+  },
   "nav": {
     "preferences": "Præferencer",
     "profile": "Profil",
-    "settings": "Indstillinger",
     "privacy": "Privatliv og data",
     "logOut": "Log ud"
   },
   "account": {
-    "title": "Konto"
+    "title": "Indstillinger"
   },
   "actions": {
     "saveChanges": "Gem ændringer",

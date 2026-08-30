@@ -1,4 +1,4 @@
-import type { Database } from '@mincirklen/shared'
+import type { Database, Gender } from '@mincirklen/shared'
 import type { Kysely } from 'kysely'
 import { type KmsConfig, decryptField, encryptField } from '../adapters/kmsAdapter'
 
@@ -7,6 +7,7 @@ export interface UserProfileRow {
   userId: string
   firstName: string
   lastName: string
+  gender: Gender
   country: string
   mobileNumber: string
   stayAnonymous: boolean
@@ -17,7 +18,7 @@ export interface UserProfileRow {
 }
 
 // The only shape ever encrypted/decrypted as a unit — see
-// migrations/0006_encrypt_user_profile_pii.ts.
+// migrations/0001_init.ts.
 interface EncryptedPii {
   firstName: string
   lastName: string
@@ -34,6 +35,7 @@ export async function upsertUserProfile(
     userId: string
     firstName: string
     lastName: string
+    gender: Gender
     country: string
     mobileNumber: string
     stayAnonymous: boolean
@@ -61,6 +63,7 @@ export async function upsertUserProfile(
     .values({
       user_id: params.userId,
       pii_ciphertext: piiCiphertext,
+      gender: params.gender,
       country: params.country,
       stay_anonymous: params.stayAnonymous,
       terms_accepted_at: params.termsAcceptedAt,
@@ -70,6 +73,7 @@ export async function upsertUserProfile(
     .onConflict((oc) =>
       oc.column('user_id').doUpdateSet({
         pii_ciphertext: piiCiphertext,
+        gender: params.gender,
         country: params.country,
         stay_anonymous: params.stayAnonymous,
         terms_accepted_at: params.termsAcceptedAt,
@@ -87,6 +91,7 @@ export async function upsertUserProfile(
     userId: row.user_id,
     firstName: params.firstName,
     lastName: params.lastName,
+    gender: params.gender,
     mobileNumber: params.mobileNumber,
     country: row.country,
     stayAnonymous: row.stay_anonymous,
@@ -109,6 +114,36 @@ export async function userProfileExists(db: Kysely<Database>, userId: string): P
   return row !== undefined
 }
 
+// Batch, non-anonymous-only: skips the KMS decrypt round trip entirely
+// for anonymous members (the common case — "anonymous by default", see
+// migrations/0001_init.ts), so a session's getState poll doesn't
+// fan out into up to MAX_USERS_PER_SESSION KMS calls for names nobody
+// will ever see. Never caches — resolved fresh from Postgres/KMS on every
+// call, so toggling stay_anonymous back on masks the name again on the
+// very next call. Callers (sessionService.ts's getSessionState) re-derive
+// every member's display name this way on every read, including for
+// messages/join notices already sent — their display name is resolved
+// from the roster at render time, never stored on the message itself, so
+// there's nothing to retroactively scrub.
+export async function findDisplayNames(db: Kysely<Database>, kms: KmsConfig, userIds: string[]): Promise<Map<string, string>> {
+  if (userIds.length === 0) return new Map()
+
+  const rows = await db
+    .selectFrom('user_profiles')
+    .select(['user_id', 'pii_ciphertext'])
+    .where('user_id', 'in', userIds)
+    .where('stay_anonymous', '=', false)
+    .execute()
+
+  const entries = await Promise.all(
+    rows.map(async (row): Promise<[string, string]> => {
+      const pii = JSON.parse(await decryptField(kms, row.pii_ciphertext)) as EncryptedPii
+      return [row.user_id, pii.firstName]
+    }),
+  )
+  return new Map(entries)
+}
+
 export async function findUserProfileByUserId(
   db: Kysely<Database>,
   kms: KmsConfig,
@@ -124,6 +159,7 @@ export async function findUserProfileByUserId(
     userId: row.user_id,
     firstName: pii.firstName,
     lastName: pii.lastName,
+    gender: row.gender as Gender,
     mobileNumber: pii.mobileNumber,
     country: row.country,
     stayAnonymous: row.stay_anonymous,

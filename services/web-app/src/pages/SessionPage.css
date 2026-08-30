@@ -8,6 +8,12 @@
 
 .dash-messages {
   padding: var(--space-5) var(--space-6);
+  /* index.css's `html { touch-action: pan-x pan-y }` doesn't reliably
+     block pinch-zoom *inside* a scrollable overflow region on mobile
+     Safari/Chrome — the scroll container needs its own touch-action, not
+     just an ancestor's. Only pan-y since this only ever scrolls
+     vertically. */
+  touch-action: pan-y;
 }
 
 .dash-composer {
@@ -15,9 +21,116 @@
 }
 
 /* Wider than the default .ds-modal (480px) to fit the two-column
-   nav + content layout — see DashboardPage.tsx's AccountModal. */
+   nav + content layout — see SessionPage.tsx's AccountModal. */
 .dash-account-modal {
   max-width: 640px;
+}
+
+/* Modal.tsx still renders this (via the `title` prop) purely so the
+   Dialog keeps an accessible name (RAC wires aria-labelledby to it) —
+   the *visible* heading is .dash-account-modal__nav-title below instead,
+   so it lives inside the sliding nav panel and moves off-screen with it
+   on mobile step 2, rather than staying pinned above the Back button. */
+.dash-account-modal .ds-modal__title {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.dash-account-modal__nav-title {
+  margin-bottom: var(--space-2);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-primary);
+}
+
+/* Clips the slide transition below — without this, the (mobile-only)
+   200%-wide .dash-account-modal__body would overflow the dialog and
+   either get clipped oddly by .ds-modal's own overflow:auto or grow the
+   modal itself. Inert on desktop (nothing overflows it there). */
+.dash-account-modal__viewport {
+  overflow: hidden;
+}
+
+.dash-account-modal__body {
+  display: flex;
+  gap: var(--space-5);
+  min-height: 320px;
+}
+
+.dash-account-modal__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 160px;
+  flex-shrink: 0;
+  border-right: 0.5px solid var(--border-subtle);
+  padding-right: var(--space-4);
+}
+
+.dash-account-modal__content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* The mobile-only "step 2 back to step 1" control — see
+   SessionPage.tsx's AccountModal mobileDetailOpen state. Hidden by
+   default (desktop shows nav + content side by side, so there's no
+   "back" to go to); the mobile media query below both reveals it and
+   turns .dash-account-modal__body into a two-panel slider. */
+.dash-account-modal__back {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .dash-account-modal__body {
+    width: 200%;
+    gap: 0;
+    transition: transform var(--duration-base) var(--easing-standard);
+  }
+
+  .dash-account-modal__body--detail {
+    transform: translateX(-50%);
+  }
+
+  .dash-account-modal__nav,
+  .dash-account-modal__content {
+    width: 50%;
+    flex-shrink: 0;
+    box-sizing: border-box;
+  }
+
+  .dash-account-modal__nav {
+    border-right: none;
+    padding-right: 0;
+  }
+
+  .dash-account-modal__content {
+    padding-left: var(--space-2);
+  }
+
+  .dash-account-modal__back {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border: none;
+    background: none;
+    padding: 0;
+    margin-bottom: var(--space-1);
+    font-family: var(--font-family-base);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
 }
 
 .dash-account-modal__nav-item {
@@ -90,6 +203,14 @@
   display: none;
 }
 
+.dash-participants-drawer-backdrop {
+  display: none;
+}
+
+.dash-participants-drawer {
+  display: none;
+}
+
 .dash-loading-overlay {
   position: absolute;
   inset: 0;
@@ -138,7 +259,7 @@
 }
 
 /* Same visual language as components/TextField's .ds-textfield__input, but
-   height isn't fixed — JS (DashboardPage.tsx's auto-grow effect) sets an
+   height isn't fixed — JS (SessionPage.tsx's auto-grow effect) sets an
    explicit pixel height to fit the content, capped by max-height below at
    4 lines' worth, at which point overflow-y:auto takes over as an
    internal scroll instead of growing any further. */
@@ -181,6 +302,16 @@
   display: none;
 }
 
+.dash-header-participants--desktop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dash-header-participants--mobile {
+  display: none;
+}
+
 .dash-send-split {
   position: relative;
   display: flex;
@@ -188,7 +319,8 @@
 
 .dash-send-split__main {
   height: 44px;
-  padding: 0 var(--space-4);
+  width: 44px;
+  padding: 0;
   border: none;
   border-radius: var(--radius-md);
   background: var(--accent-safe);
@@ -337,6 +469,7 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    touch-action: pan-y;
     padding: 0 var(--space-4);
   }
 
@@ -349,6 +482,54 @@
     border-top: 0.5px solid var(--border-subtle);
   }
 
+  /* Same pattern as .dash-drawer above, mirrored to slide in from the
+     right instead of the left — used by the mobile participants panel
+     rather than the session-list hamburger menu. */
+  .dash-participants-drawer-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgb(0 0 0 / 0.4);
+    z-index: 45;
+  }
+
+  .dash-participants-drawer {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    width: min(300px, 85vw);
+    background: var(--surface-raised);
+    border-left: 0.5px solid var(--border-subtle);
+    box-sizing: border-box;
+    overflow: hidden;
+    z-index: 50;
+    transform: translateX(100%);
+    transition: transform var(--duration-base) var(--easing-standard);
+  }
+
+  .dash-participants-drawer--open {
+    transform: translateX(0);
+  }
+
+  .dash-participants-drawer__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: none;
+    padding: var(--space-5) var(--space-4) var(--space-4);
+  }
+
+  .dash-participants-drawer__list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    touch-action: pan-y;
+    padding: 0 var(--space-4) var(--space-4);
+  }
+
   .dash-composer-actions--desktop {
     display: none;
   }
@@ -356,5 +537,35 @@
   .dash-composer-actions--mobile {
     display: flex;
     margin-left: auto;
+  }
+
+  .dash-header-participants--desktop {
+    display: none;
+  }
+
+  .dash-header-participants--mobile {
+    display: flex;
+    /* Visually swaps places with the theme toggle (DOM order stays
+       ThemeToggle-first, which desktop still relies on) without needing
+       a second, mobile-specific copy of ThemeToggle in the markup. */
+    order: -1;
+  }
+
+  /* Smaller than the desktop 44px-min-height box — on a phone screen
+     that height eats a disproportionate share of the already-limited
+     vertical space above the keyboard. */
+  .dash-composer-textarea {
+    min-height: 36px;
+    padding: 8px var(--space-3);
+    font-size: var(--font-size-sm);
+  }
+
+  .dash-send-split__main,
+  .dash-send-split__toggle {
+    height: 36px;
+  }
+
+  .dash-send-split__main {
+    width: 36px;
   }
 }

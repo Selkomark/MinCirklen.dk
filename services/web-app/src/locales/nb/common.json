@@ -1,14 +1,17 @@
 {
   "toggleTheme": "Bytt tema",
+  "language": "Språk",
+  "toast": {
+    "dismiss": "Lukk"
+  },
   "nav": {
     "preferences": "Preferanser",
     "profile": "Profil",
-    "settings": "Innstillinger",
     "privacy": "Personvern og data",
     "logOut": "Logg ut"
   },
   "account": {
-    "title": "Konto"
+    "title": "Innstillinger"
   },
   "actions": {
     "saveChanges": "Lagre endringer",

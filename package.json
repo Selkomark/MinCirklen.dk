@@ -2,6 +2,7 @@
   "name": "mincirklen",
   "private": true,
   "workspaces": [
+    "packages/proto",
     "packages/shared",
     "services/trpc-api",
     "services/websocket-service"

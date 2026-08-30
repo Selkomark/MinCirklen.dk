@@ -35,7 +35,7 @@ const OTHER_PROVIDERS = [
 
 export function LoginPage() {
   const { t } = useTranslation('auth')
-  useDocumentTitle('Log in — MinCirklen')
+  useDocumentTitle(t('login.documentTitle'))
   const errorKey = loginErrorKey()
 
   return (

@@ -8,6 +8,7 @@ const message: MessageRow = {
   sessionId: 's1',
   userId: 'p1',
   body: 'hello',
+  type: 'user',
   createdAt: new Date('2026-01-01T00:00:00Z'),
 }
 

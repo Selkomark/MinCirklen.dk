@@ -23,8 +23,7 @@ export interface SessionsTable {
   turn_claimed_at: NullableTimestamp
   // Nullable: only populated for circles created through the scheduled
   // /start/new flow — the pre-existing ad-hoc turn-based flow leaves all
-  // five null. See migrations/0007_circle_scheduling.ts and
-  // migrations/0008_circle_name.ts.
+  // five null.
   topic_id: string | null
   scheduled_at: NullableTimestamp
   duration_minutes: number | null
@@ -39,14 +38,14 @@ export interface SessionUsersTable {
   left_at: NullableTimestamp
   turn_order: number | null
   // Bumped on every visit to /s/:sessionId, not just the original join —
-  // see migrations/0010_session_visit_tracking.ts. Backs the "recent
+  // see migrations/0001_init.ts. Backs the "recent
   // sessions" sidebar ordering (most recently visited first).
   last_visited_at: Timestamp
   // agreement key -> ISO8601 timestamp this user agreed to it at, for
   // *this* session join specifically (e.g. "community_guidelines",
   // "privacy_policy", "anonymity_acknowledgement", "terms_of_service") —
   // see repositories/sessionRepository.ts's CIRCLE_GUIDELINE_AGREEMENT_KEYS
-  // and migrations/0013_move_agreements_to_session_users.ts for why this
+  // and migrations/0001_init.ts for why this
   // lives per-join rather than once per user.
   agreements: JSONColumnType<Record<string, string>, Record<string, string> | undefined>
 }
@@ -56,6 +55,11 @@ export interface MessagesTable {
   session_id: string
   user_id: string
   body: string
+  // 'system' rows are synthetic events (e.g. a join notice) rendered
+  // inline in the timeline rather than as a real chat bubble — see
+  // messageRepository.ts's insertMessage and
+  // migrations/0001_init.ts.
+  type: Generated<'user' | 'system'>
   created_at: Timestamp
 }
 
@@ -80,6 +84,18 @@ export interface FeedbackRatingsTable {
   created_at: Timestamp
 }
 
+// A user-initiated "Report this session" complaint — distinct from
+// ModerationEventsTable, which is the AI classifier's own automated
+// pass/flag/crisis calls on message content, not a user complaint.
+export interface SessionReportsTable {
+  id: Generated<string>
+  session_id: string
+  reporter_user_id: string
+  about_user_ids: JSONColumnType<string[]>
+  body: string
+  created_at: Timestamp
+}
+
 export interface UserIdentitiesTable {
   id: Generated<string>
   user_id: string
@@ -92,15 +108,17 @@ export interface UserProfilesTable {
   id: Generated<string>
   user_id: string
   // Encrypted { firstName, lastName, mobileNumber } — see
-  // migrations/0006_encrypt_user_profile_pii.ts and adapters/kmsAdapter.ts.
-  // Never read/written as plaintext outside userProfileRepository.ts.
+  // migrations/0001_init.ts and adapters/kmsAdapter.ts. Never read/
+  // written as plaintext outside userProfileRepository.ts.
   pii_ciphertext: string
+  // 'male' | 'female' | 'other' at the application layer — see
+  // schemas/userProfile.ts's GENDERS.
+  gender: string
   country: string
   stay_anonymous: Generated<boolean>
   terms_accepted_at: Timestamp
   created_at: Timestamp
-  // Both nullable — null means "not set," not an empty/invalid value. See
-  // migrations/0014_user_preferences.ts.
+  // Both nullable — null means "not set," not an empty/invalid value.
   language: string | null
   timezone: string | null
 }
@@ -121,6 +139,7 @@ export interface Database {
   messages: MessagesTable
   moderation_events: ModerationEventsTable
   feedback_ratings: FeedbackRatingsTable
+  session_reports: SessionReportsTable
   user_identities: UserIdentitiesTable
   user_profiles: UserProfilesTable
   topics: TopicsTable

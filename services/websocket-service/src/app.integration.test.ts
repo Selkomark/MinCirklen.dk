@@ -3,7 +3,12 @@ import { DEFAULT_LOCAL_DATABASE_URL, createDb, createPgPool, createSessionToken,
 import { connect, type NatsConnection } from 'nats'
 import { Redis } from 'ioredis'
 import { pack, unpack } from 'msgpackr'
+import { createClient, type Client, type Interceptor } from '@connectrpc/connect'
+import { createConnectTransport } from '@connectrpc/connect-node'
+import { InternalService } from '@mincirklen/proto'
+import type { FastifyInstance } from 'fastify'
 import { createApp } from './app'
+import { createRpcServer } from './rpcServer'
 import { seedTurnState } from './adapters/redisTurnStateAdapter'
 
 const NATS_URL = process.env.NATS_URL ?? 'nats://localhost:4222'
@@ -21,15 +26,22 @@ const db = createDb(pool)
 // connection — this is the point of the test: nothing is shared between
 // them except the database and the NATS/Redis servers, exactly like two
 // real websocket-service pods. trpc-api's publish is stood in for via a
-// real HTTP call to pod A's own /internal/rooms/:sessionId/publish route
-// (see below), not a direct NATS publish — that's the actual thing
-// Stage 1 changed.
+// real RPC call to pod A's own rpcServer.ts (see below), not a direct
+// NATS publish — that's the actual thing Stage 1 changed.
 let natsA: NatsConnection
 let natsB: NatsConnection
 let redisA: Redis
 let redisB: Redis
 let serverA: ReturnType<typeof Bun.serve>
 let serverB: ReturnType<typeof Bun.serve>
+let rpcServerA: FastifyInstance
+let rpcBaseUrlA: string
+let rpcClientA: Client<typeof InternalService>
+
+const secretInterceptor: Interceptor = (next) => (req) => {
+  req.header.set('x-internal-secret', INTERNAL_SERVICE_SECRET)
+  return next(req)
+}
 
 beforeAll(async () => {
   await runMigrations(db, 'test')
@@ -43,16 +55,43 @@ beforeAll(async () => {
   const { websocket } = await import('hono/bun')
   serverA = Bun.serve({ port: 0, fetch: appA.fetch, websocket })
   serverB = Bun.serve({ port: 0, fetch: appB.fetch, websocket })
+
+  // Pod A's own RPC listener — a NATS publish through this reaches any
+  // subscriber on natsA/natsB alike (NATS doesn't care which "pod" made
+  // the call), so this single client stands in for trpc-api's publish
+  // call for every publish in this file, same as before.
+  rpcServerA = createRpcServer({ db, nats: natsA, redis: redisA, authSecret: AUTH_SECRET, allowedOrigins: [], internalServiceSecret: INTERNAL_SERVICE_SECRET, wireFormat: 'json' })
+  rpcBaseUrlA = await rpcServerA.listen({ port: 0, host: '127.0.0.1' })
+  rpcClientA = createClient(InternalService, createConnectTransport({ httpVersion: '1.1', baseUrl: rpcBaseUrlA, interceptors: [secretInterceptor] }))
 })
 
 afterAll(async () => {
   serverA.stop(true)
   serverB.stop(true)
+  await rpcServerA.close()
   redisA.disconnect()
   redisB.disconnect()
   await Promise.all([natsA.close(), natsB.close()])
   await db.destroy()
 })
+
+function fakeMessage(sessionId: string, body: string) {
+  return {
+    sessionId,
+    messageId: crypto.randomUUID(),
+    userId: crypto.randomUUID(),
+    body,
+    type: 'user',
+    createdAt: new Date().toISOString(),
+  }
+}
+
+function expectedMessageFrame(msg: ReturnType<typeof fakeMessage>): string {
+  return JSON.stringify({
+    type: 'message',
+    payload: { id: msg.messageId, sessionId: msg.sessionId, userId: msg.userId, body: msg.body, type: msg.type, createdAt: msg.createdAt },
+  })
+}
 
 function waitForOpen(ws: WebSocket): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -105,8 +144,8 @@ function connectSocket(port: number | undefined, token: string): WebSocket {
   return new WebSocket(`ws://localhost:${port}/ws`, { headers: { Cookie: `mc_session=${token}` } })
 }
 
-describe('POST /internal/rooms/:sessionId/publish', () => {
-  test('a message published once (via the internal route, standing in for trpc-api) reaches clients connected to two different pods', async () => {
+describe('publishMessage RPC', () => {
+  test('a message published once (via the RPC, standing in for trpc-api) reaches clients connected to two different pods', async () => {
     const session = await db.insertInto('sessions').defaultValues().returningAll().executeTakeFirstOrThrow()
     const tokenX = await createMemberAndToken(session.id, 0)
     const tokenY = await createMemberAndToken(session.id, 1)
@@ -130,22 +169,16 @@ describe('POST /internal/rooms/:sessionId/publish', () => {
       // NATS SUBSCRIBE round trip before publishing.
       await sleep(300)
 
-      // Hits pod A's HTTP surface, standing in for trpc-api's own call —
-      // this is the actual thing under test (Stage 1's new HTTP path),
-      // not a direct NATS publish.
-      const payload = { body: 'hello from the pipeline' }
-      const publishRes = await fetch(`http://localhost:${serverA.port}/internal/rooms/${session.id}/publish`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-internal-secret': INTERNAL_SERVICE_SECRET },
-        body: JSON.stringify(payload),
-      })
-      expect(publishRes.status).toBe(204)
+      // Hits pod A's RPC surface, standing in for trpc-api's own call —
+      // this is the actual thing under test, not a direct NATS publish.
+      const msg = fakeMessage(session.id, 'hello from the pipeline')
+      await rpcClientA.publishMessage(msg)
 
       const [messageX, messageY] = await Promise.all([receivedX, receivedY])
 
       // Both pods relayed the single publish to their own locally
       // connected client — this is the actual horizontal-scaling proof.
-      const expectedFrame = JSON.stringify({ type: 'message', payload })
+      const expectedFrame = expectedMessageFrame(msg)
       expect(messageX).toBe(expectedFrame)
       expect(messageY).toBe(expectedFrame)
     } finally {
@@ -156,26 +189,28 @@ describe('POST /internal/rooms/:sessionId/publish', () => {
 
   test('rejects a publish with a missing or wrong internal secret', async () => {
     const session = await db.insertInto('sessions').defaultValues().returningAll().executeTakeFirstOrThrow()
+    const msg = fakeMessage(session.id, 'x')
+    const url = `${rpcBaseUrlA}/mincirklen.internal.v1.InternalService/PublishMessage`
 
-    const noHeader = await fetch(`http://localhost:${serverA.port}/internal/rooms/${session.id}/publish`, {
+    const missing = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ body: 'x' }),
+      body: JSON.stringify(msg),
     })
-    expect(noHeader.status).toBe(403)
+    expect(missing.status).toBe(403)
 
-    const wrongSecret = await fetch(`http://localhost:${serverA.port}/internal/rooms/${session.id}/publish`, {
+    const wrongSecret = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-internal-secret': 'not-the-secret' },
-      body: JSON.stringify({ body: 'x' }),
+      body: JSON.stringify(msg),
     })
     expect(wrongSecret.status).toBe(403)
   })
 
   test('rejects a body that is not valid JSON', async () => {
-    const session = await db.insertInto('sessions').defaultValues().returningAll().executeTakeFirstOrThrow()
+    const url = `${rpcBaseUrlA}/mincirklen.internal.v1.InternalService/PublishMessage`
 
-    const res = await fetch(`http://localhost:${serverA.port}/internal/rooms/${session.id}/publish`, {
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-internal-secret': INTERNAL_SERVICE_SECRET },
       body: 'not json',
@@ -302,16 +337,17 @@ describe('binary wire format', () => {
 
       await sleep(300)
 
-      const payload = { body: 'binary mode round trip' }
-      const publishRes = await fetch(`http://localhost:${binaryServer.port}/internal/rooms/${session.id}/publish`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-internal-secret': INTERNAL_SERVICE_SECRET },
-        body: JSON.stringify(payload),
-      })
-      expect(publishRes.status).toBe(204)
+      // Publishing through pod A's RPC listener still reaches this
+      // connection: NATS pub/sub doesn't care which "pod" made the call,
+      // only that both share natsA — see rpcServerA's setup comment above.
+      const msg = fakeMessage(session.id, 'binary mode round trip')
+      await rpcClientA.publishMessage(msg)
 
       const messageBuffer = await messagePromise
-      expect(unpack(new Uint8Array(messageBuffer))).toEqual({ type: 'message', payload })
+      expect(unpack(new Uint8Array(messageBuffer))).toEqual({
+        type: 'message',
+        payload: { id: msg.messageId, sessionId: msg.sessionId, userId: msg.userId, body: msg.body, type: msg.type, createdAt: msg.createdAt },
+      })
     } finally {
       ws.close()
       binaryServer.stop(true)
@@ -391,12 +427,7 @@ describe('subscribe protocol', () => {
       // Still relaying normally after the heartbeat — proves the ping
       // didn't disrupt the connection or its subscriptions.
       const received = waitForFrame(ws, (f) => f.type === 'message')
-      const publishRes = await fetch(`http://localhost:${serverA.port}/internal/rooms/${session.id}/publish`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-internal-secret': INTERNAL_SERVICE_SECRET },
-        body: JSON.stringify({ body: 'after ping' }),
-      })
-      expect(publishRes.status).toBe(204)
+      await rpcClientA.publishMessage(fakeMessage(session.id, 'after ping'))
       await received
     } finally {
       ws.close()

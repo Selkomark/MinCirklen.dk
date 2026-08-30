@@ -23,8 +23,8 @@ export function subscribeToRoom(nc: NatsConnection, sessionId: string): RoomSubs
 }
 
 // Moved here from trpc-api's now-deleted adapters/natsAdapter.ts — trpc-api
-// no longer touches NATS directly, it calls internalController.ts's
-// /internal/rooms/:sessionId/publish route instead, which calls this.
+// no longer touches NATS directly, it calls rpcServer.ts's publishMessage
+// RPC instead, which calls this.
 export function publishMessage(nc: NatsConnection, sessionId: string, payload: unknown): void {
   nc.publish(roomSubject(sessionId), JSON.stringify(payload))
 }
@@ -36,9 +36,9 @@ export function subscribeToPresence(nc: NatsConnection, sessionId: string): Room
   return subscribeToSubject(nc, presenceSubject(sessionId))
 }
 
-// Called from internalController.ts's turn/roster handlers (join,
-// advance) once their Redis-side mutation has succeeded — never from
-// trpc-api, which has no NATS access at all.
+// Called from rpcServer.ts's turn/roster RPCs (join, advance) once their
+// Redis-side mutation has succeeded — never from trpc-api, which has no
+// NATS access at all.
 export function publishPresenceEvent(nc: NatsConnection, sessionId: string, payload: unknown): void {
   nc.publish(presenceSubject(sessionId), JSON.stringify(payload))
 }

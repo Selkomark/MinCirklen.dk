@@ -9,7 +9,8 @@
     "startsIn": "Alkaa {{duration}} kuluttua",
     "live": "Käynnissä",
     "startingSoon": "Alkaa pian",
-    "open": "Avoin"
+    "open": "Avoin",
+    "openCalendar": "Avaa kalenteri"
   },
   "sizes": {
     "upTo": "Enintään {{count}}"
@@ -24,6 +25,7 @@
     "previousSessionsLoadFailed": "Aiempia piirejä ei voitu ladata"
   },
   "choose": {
+    "documentTitle": "Aloita piiri — MinCirklen",
     "title": "Uusi istunto",
     "subtitle": "Miten haluat aloittaa",
     "joinTitle": "Liity olemassa olevaan piiriin",
@@ -32,6 +34,7 @@
     "newSubtitle": "Aseta aihe, aika ja kesto"
   },
   "joinPage": {
+    "documentTitle": "Liity piiriin — MinCirklen",
     "title": "Liity piiriin",
     "subtitle": "Valitse piiri, joka sopii aikatauluusi",
     "searchPlaceholder": "Hae piirejä nimellä",
@@ -53,6 +56,7 @@
     "back": "Takaisin"
   },
   "newPage": {
+    "documentTitle": "Aloita uusi piiri — MinCirklen",
     "title": "Aloita uusi piiri",
     "subtitle": "Aseta aihe, aika ja kuinka moni voi liittyä",
     "circleName": "Piirin nimi",

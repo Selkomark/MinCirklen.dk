@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { Key } from 'react-aria-components'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
@@ -20,6 +20,7 @@ import { useTheme } from '../components/ThemeProvider'
 import { usePreferences } from '../PreferencesProvider'
 import { PUBLIC_PAGES, publicPagePath } from '../publicPages/pages'
 import { COUNTRIES } from '../countries'
+import { GENDERS } from '../genders'
 import { SUPPORTED_LANGUAGES, detectDefaultLanguage, type SupportedLanguage } from '../languages'
 import { moderationTransparencyPath, landingPath } from '../App'
 import { useDocumentTitle } from '../useDocumentTitle'
@@ -40,14 +41,15 @@ import {
   SendMessageConflictError,
   SkipTurnNotYourTurnError,
   skipTurn,
+  submitSessionReport,
   useRecentVisits,
   useSessionChat,
   useTurnCountdown,
   useWhoAmI,
   visitDisplayName,
   visitSession,
-} from './dashboardShared'
-import './DashboardPage.css'
+} from './sessionShared'
+import './SessionPage.css'
 
 // Whether a turn-inactivity countdown reaching zero with a draft present
 // auto-sends it, vs. always just auto-skipping (see useTurnCountdown's
@@ -124,39 +126,6 @@ function PrimaryButton({
   )
 }
 
-// Same disabled-state workaround as PrimaryButton, colored for the urgent/report action.
-function DangerButton({
-  children,
-  disabled,
-  onClick,
-}: {
-  children: React.ReactNode
-  disabled?: boolean
-  onClick?: () => void
-}) {
-  return (
-    <button
-      disabled={disabled}
-      onClick={onClick}
-      style={{
-        height: 44,
-        padding: '0 22px',
-        borderRadius: 'var(--radius-md)',
-        border: 'none',
-        background: 'var(--signal-urgent)',
-        color: 'var(--text-on-accent)',
-        fontFamily: 'var(--font-family-base)',
-        fontSize: 'var(--font-size-md)',
-        fontWeight: 'var(--font-weight-medium)',
-        opacity: disabled ? 0.45 : 1,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-      }}
-    >
-      {children}
-    </button>
-  )
-}
-
 function CommunityGuidelinesModal({
   isOpen,
   onAgree,
@@ -173,7 +142,7 @@ function CommunityGuidelinesModal({
   // user last agreed).
   agreedKeys: string[]
 }) {
-  const { t } = useTranslation('dashboard')
+  const { t } = useTranslation('session')
   const [step, setStep] = useState(0)
   // Three distinct consents, not one combined checkbox — this is the
   // single gate for every way of joining a circle (direct visit,
@@ -310,17 +279,36 @@ const AVATAR_COLORS = [
   'oklch(90% 0.06 20)',
 ]
 
-// Roster members are anonymized by turn position, never by real
-// identity — "Member 3", not a name — same anonymity guarantee as the
-// rest of the product (Charter §4). `roster` order comes straight from
-// the backend's turn_order, so this is stable across a session.
+// First letter only (not two, the way a full-name avatar usually would)
+// — this only ever reveals a first name, on purpose (see memberFor's own
+// comment), so there's no last-name initial to pair it with anyway.
+function initialsFor(displayName: string): string {
+  return (displayName[0] ?? '?').toUpperCase()
+}
+
+// Roster members are anonymized by turn position by default — "Member
+// 3", not a name (Charter §4) — *unless* that member has turned off
+// "stay anonymous" in their profile, in which case `roster[].displayName`
+// (resolved fresh by trpc-api on every session.getState call — see
+// sessionShared.tsx's RosterEntry) carries their first name and is used
+// instead. Never a persisted/cached value: since this is looked up live
+// from the roster every time a label is needed (here), a message sent or
+// a "joined" notice posted while someone was non-anonymous automatically
+// shows as "Member N" again the moment they turn anonymity back on —
+// there's nothing baked into the message/notice itself to un-reveal.
+// `roster` order comes straight from the backend's turn_order, so the
+// anonymous fallback label is stable across a session regardless.
 function memberFor(userId: string, roster: RosterEntry[], myUserId: string | null): Member {
   if (userId === myUserId) {
     return { userId, label: 'You', initials: 'Y', bg: 'var(--accent-safe)' }
   }
   const entry = roster.find((r) => r.userId === userId)
   const n = (entry?.turnOrder ?? 0) + 1
-  return { userId, label: `Member ${n}`, initials: `M${n}`, bg: AVATAR_COLORS[(entry?.turnOrder ?? 0) % AVATAR_COLORS.length] as string }
+  const bg = AVATAR_COLORS[(entry?.turnOrder ?? 0) % AVATAR_COLORS.length] as string
+  if (entry?.displayName) {
+    return { userId, label: entry.displayName, initials: initialsFor(entry.displayName), bg }
+  }
+  return { userId, label: `Member ${n}`, initials: `M${n}`, bg }
 }
 
 // `online` is presence (currently connected — see SessionState.onlineUserIds),
@@ -338,7 +326,7 @@ function MemberAvatar({
   ringed?: boolean
   online?: boolean
 }) {
-  const { t } = useTranslation('dashboard')
+  const { t } = useTranslation('session')
   return (
     <div style={{ position: 'relative', width: size, height: size, flex: 'none' }}>
       <Avatar
@@ -380,6 +368,83 @@ function MemberAvatar({
   )
 }
 
+// Memoized so a keystroke in the composer (which lives in the same
+// SessionCenterPanel and re-renders it every time) doesn't force every
+// already-rendered message to redo its `formatMessageTimestamp` work
+// (a fresh Intl.DateTimeFormat construction each call) — only a message
+// whose own props actually changed re-renders.
+const MessageRow = memo(function MessageRow({
+  message,
+  member,
+  isOwn,
+  timeZone,
+}: {
+  message: ChatMessage
+  member: Member
+  isOwn: boolean
+  timeZone: string
+}) {
+  return (
+    <div style={{ display: 'flex', gap: 10, maxWidth: 560 }}>
+      <MemberAvatar member={member} size={32} />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <span style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+          <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>{member.label}</span>
+          <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', opacity: 0.7 }}>
+            {formatMessageTimestamp(message.createdAt, timeZone)}
+          </span>
+        </span>
+        <div
+          style={{
+            background: isOwn ? 'var(--accent-safe-surface)' : 'var(--surface-raised)',
+            border: '0.5px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-md)',
+            padding: 'var(--space-3) var(--space-4)',
+            fontSize: 'var(--font-size-sm)',
+            color: 'var(--text-primary)',
+            lineHeight: 'var(--line-height-base)',
+            // Plain text content collapses newlines by default —
+            // without this a Shift+Enter-composed message reads
+            // back as one run-on line.
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          }}
+        >
+          {message.body}
+        </div>
+      </div>
+    </div>
+  )
+})
+
+// A "member joined" system-message line, rendered inline in the message
+// timeline the way Microsoft Teams does — left-aligned with a timestamp,
+// muted, no avatar/bubble — in place of the toast this replaced. Backed
+// by a real persisted `type: 'system'` message row (see
+// messageRepository.ts's `type` column), so it survives a refresh and
+// interleaves correctly with real messages by timestamp automatically —
+// see the render loop below, no separate merge needed.
+const JoinEventRow = memo(function JoinEventRow({
+  message,
+  member,
+  timeZone,
+  t,
+}: {
+  message: ChatMessage
+  member: Member
+  timeZone: string
+  t: TFunction<'session'>
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, padding: '2px 0' }}>
+      <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>{t('composer.memberJoined', { name: member.label })}</span>
+      <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', opacity: 0.7 }}>
+        {formatMessageTimestamp(message.createdAt, timeZone)}
+      </span>
+    </div>
+  )
+})
+
 // Matches pages/start/shared.tsx's Chip pattern (pill-style choice control), reused here so
 // the "who is this about" picker looks consistent with the rest of the product.
 function chipStyle(active: boolean): React.CSSProperties {
@@ -402,22 +467,53 @@ function chipStyle(active: boolean): React.CSSProperties {
 function ReportSessionModal({
   isOpen,
   onOpenChange,
+  sessionId,
   reportable,
 }: {
   isOpen: boolean
   onOpenChange: (open: boolean) => void
+  sessionId: string
   reportable: Member[]
 }) {
-  const { t } = useTranslation('dashboard')
+  const { t } = useTranslation('session')
   const [text, setText] = useState('')
   const [aboutIds, setAboutIds] = useState<string[]>([])
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
 
   function toggleAbout(id: string) {
     setAboutIds((ids) => (ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]))
   }
 
+  // Reset per-open, not just on a successful submit — reopening the
+  // modal after a cancel (or a failed attempt the user gave up on)
+  // should never show a stale error from a previous attempt.
+  function handleOpenChange(open: boolean) {
+    if (open) setSubmitError(null)
+    onOpenChange(open)
+  }
+
+  async function handleSubmit(close: () => void) {
+    setSubmitError(null)
+    setIsSubmitting(true)
+    try {
+      await submitSessionReport(sessionId, aboutIds, text.trim())
+      const about = reportable
+        .filter((m) => aboutIds.includes(m.userId))
+        .map((m) => m.label)
+        .join(', ')
+      setText('')
+      setAboutIds([])
+      addToast(t('reportModal.submitted', { about }), { variant: 'safe' })
+      close()
+    } catch {
+      setSubmitError(t('reportModal.submitError'))
+      setIsSubmitting(false)
+    }
+  }
+
   return (
-    <Modal isOpen={isOpen} onOpenChange={onOpenChange} title={t('reportModal.title')}>
+    <Modal isOpen={isOpen} onOpenChange={handleOpenChange} title={t('reportModal.title')}>
       {(close) => (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
           <p style={{ margin: 0, fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', lineHeight: 'var(--line-height-base)' }}>
@@ -451,25 +547,19 @@ function ReportSessionModal({
             onChange={(e) => setText(e.target.value)}
             rows={5}
           />
+          {submitError && <Alert variant="urgent">{submitError}</Alert>}
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-            <Button variant="ghost" onClick={close}>
+            <Button variant="ghost" onClick={close} isDisabled={isSubmitting}>
               {t('reportModal.cancel')}
             </Button>
-            <DangerButton
-              disabled={!text.trim() || aboutIds.length === 0}
-              onClick={() => {
-                const about = reportable
-                  .filter((m) => aboutIds.includes(m.userId))
-                  .map((m) => m.label)
-                  .join(', ')
-                addToast(t('reportModal.submitted', { about }), { variant: 'safe' })
-                setText('')
-                setAboutIds([])
-                close()
-              }}
+            <Button
+              variant="urgent"
+              isPending={isSubmitting}
+              isDisabled={!text.trim() || aboutIds.length === 0}
+              onPress={() => handleSubmit(close)}
             >
               {t('reportModal.submit')}
-            </DangerButton>
+            </Button>
           </div>
         </div>
       )}
@@ -478,7 +568,7 @@ function ReportSessionModal({
 }
 
 function NewSessionModal({ isOpen, onOpenChange, onJoined }: { isOpen: boolean; onOpenChange: (open: boolean) => void; onJoined: (sessionId: string) => void }) {
-  const { t } = useTranslation('dashboard')
+  const { t } = useTranslation('session')
   return (
     <Modal isOpen={isOpen} onOpenChange={onOpenChange} title={t('newSessionModal.title')}>
       <Tabs>
@@ -511,7 +601,7 @@ function NewSessionModal({ isOpen, onOpenChange, onJoined }: { isOpen: boolean; 
   )
 }
 
-type AccountModalSection = 'preferences' | 'profile' | 'settings' | 'privacy'
+type AccountModalSection = 'preferences' | 'profile' | 'privacy'
 
 const SYSTEM_TIMEZONE_KEY = 'system'
 const SYSTEM_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone
@@ -535,10 +625,84 @@ const TIME_ZONE_OFFSETS: Record<string, string> = Object.fromEntries(
 // than a section with its own content) and a right-hand panel that swaps
 // based on the selected section. Replaces the old "⋯" dropdown menu, which
 // only ever held a single "Log out" item.
+// Every field the Profile/Preferences form's shared save button submits —
+// used to snapshot "what's currently saved" so the button can tell
+// whether the draft actually differs from it (see AccountModal's
+// savedSnapshot/isDirty below), not just whether the required fields
+// happen to be filled in.
+interface ProfileDraft {
+  firstName: string
+  lastName: string
+  gender: Key | null
+  country: Key | null
+  mobile: string
+  stayAnonymous: boolean
+  language: SupportedLanguage
+  timezone: string | null
+}
+
+function draftsEqual(a: ProfileDraft, b: ProfileDraft): boolean {
+  return (
+    a.firstName === b.firstName &&
+    a.lastName === b.lastName &&
+    a.gender === b.gender &&
+    a.country === b.country &&
+    a.mobile === b.mobile &&
+    a.stayAnonymous === b.stayAnonymous &&
+    a.language === b.language &&
+    a.timezone === b.timezone
+  )
+}
+
+// Shared by both the Profile and Preferences sections (they save the same
+// underlying draft — see AccountModal's handleSaveProfile). Shows the
+// "Saved" confirmation inline next to the button itself instead of as a
+// toast — `justSaved && !isDirty` is what makes it disappear the instant
+// the draft diverges from what was actually saved again, without having
+// to hook every individual field's onChange to clear a flag.
+function SaveProfileRow({
+  isPending,
+  canSubmit,
+  justSaved,
+  isDirty,
+  savedLabel,
+  saveLabel,
+  onSave,
+}: {
+  isPending: boolean
+  canSubmit: boolean
+  justSaved: boolean
+  isDirty: boolean
+  savedLabel: string
+  saveLabel: string
+  onSave: () => void
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, marginTop: 'var(--space-2)' }}>
+      {justSaved && !isDirty && (
+        <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 'var(--font-size-xs)', color: 'var(--accent-safe)' }}>
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M3 8.5L6.5 12L13 4.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          {savedLabel}
+        </span>
+      )}
+      <Button variant="safe" className="dash-account-modal__save-btn" isPending={isPending} isDisabled={!canSubmit} onPress={onSave}>
+        {saveLabel}
+      </Button>
+    </div>
+  )
+}
+
 function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange: (open: boolean) => void }) {
   const { t, i18n } = useTranslation('common')
-  const { t: dt } = useTranslation('dashboard')
+  const { t: dt } = useTranslation('session')
   const [section, setSection] = useState<AccountModalSection>('profile')
+  // Mobile-only "step 2" — see the CSS media query in SessionPage.css.
+  // On desktop both the nav and the section content are visible at once,
+  // and this stays false/unused. Reset to false (step 1: nav list) every
+  // time the modal opens, alongside the other reset effect below.
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false)
   const { theme, toggleTheme } = useTheme()
   const { profile, profileLoading, profileError, refetch } = usePreferences()
 
@@ -549,6 +713,7 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
   // reverting them.
   const [editFirstName, setEditFirstName] = useState('')
   const [editLastName, setEditLastName] = useState('')
+  const [editGender, setEditGender] = useState<Key | null>(null)
   const [editCountry, setEditCountry] = useState<Key | null>(null)
   const [editMobile, setEditMobile] = useState('')
   const [editStayAnonymous, setEditStayAnonymous] = useState(true)
@@ -556,33 +721,81 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
   const [editTimezone, setEditTimezone] = useState<string | null>(null)
   const [isSavingProfile, setIsSavingProfile] = useState(false)
   const [saveProfileError, setSaveProfileError] = useState<string | null>(null)
+  // What's actually saved right now — diffed against the live draft below
+  // to decide whether the Save button has anything to do. Set both by the
+  // re-seed effect (on load/reopen) and by a successful save itself, so
+  // the button goes right back to disabled once the draft it just
+  // submitted becomes the new "saved" baseline.
+  const [savedSnapshot, setSavedSnapshot] = useState<ProfileDraft | null>(null)
+  // Shows the inline "Saved" confirmation next to the button in place of
+  // a toast — cleared implicitly the moment the draft diverges from
+  // savedSnapshot again (see the `justSaved && !isDirty` check at each
+  // render site below), not by hooking every individual field's onChange.
+  const [justSaved, setJustSaved] = useState(false)
 
-  // Reset to the default tab and clear any stale save error every time the
-  // modal opens — mirrors the old fetch-driven effect's reset, now that
-  // the fetch itself lives one level up in PreferencesProvider.
+  const currentDraft: ProfileDraft = {
+    firstName: editFirstName,
+    lastName: editLastName,
+    gender: editGender,
+    country: editCountry,
+    mobile: editMobile,
+    stayAnonymous: editStayAnonymous,
+    language: editLanguage,
+    timezone: editTimezone,
+  }
+  const isDirty = savedSnapshot !== null && !draftsEqual(currentDraft, savedSnapshot)
+
+  // Reset to the default tab/step and clear any stale save error every
+  // time the modal opens — mirrors the old fetch-driven effect's reset,
+  // now that the fetch itself lives one level up in PreferencesProvider.
   useEffect(() => {
     if (!isOpen) return
     setSection('profile')
+    setMobileDetailOpen(false)
     setSaveProfileError(null)
+    setJustSaved(false)
   }, [isOpen])
 
   // Re-seeds the draft fields whenever a freshly (re)loaded profile shows
   // up while the modal is open — on first open once the shared fetch
   // resolves, and again after a save's refetch() — so an abandoned edit
   // never survives a close/reopen, same as the old per-open fetch did.
+  // Also (re)establishes savedSnapshot from this same data, so the Save
+  // button starts out disabled (nothing dirty yet) whenever the form is
+  // freshly (re)seeded, not just right after this component's own save.
   useEffect(() => {
     if (!isOpen || !profile) return
-    setEditFirstName(profile.firstName)
-    setEditLastName(profile.lastName)
-    setEditCountry(profile.country)
-    setEditMobile(profile.mobileNumber)
-    setEditStayAnonymous(profile.stayAnonymous)
-    setEditLanguage((profile.language as SupportedLanguage | null) ?? detectDefaultLanguage())
-    setEditTimezone(profile.timezone)
+    const snapshot: ProfileDraft = {
+      firstName: profile.firstName,
+      lastName: profile.lastName,
+      gender: profile.gender,
+      country: profile.country,
+      mobile: profile.mobileNumber,
+      stayAnonymous: profile.stayAnonymous,
+      language: (profile.language as SupportedLanguage | null) ?? detectDefaultLanguage(),
+      timezone: profile.timezone,
+    }
+    setEditFirstName(snapshot.firstName)
+    setEditLastName(snapshot.lastName)
+    setEditGender(snapshot.gender)
+    setEditCountry(snapshot.country)
+    setEditMobile(snapshot.mobile)
+    setEditStayAnonymous(snapshot.stayAnonymous)
+    setEditLanguage(snapshot.language)
+    setEditTimezone(snapshot.timezone)
+    setSavedSnapshot(snapshot)
   }, [isOpen, profile])
 
   const canSaveProfile =
-    editFirstName.trim() !== '' && editLastName.trim() !== '' && editCountry != null && editMobile.trim() !== ''
+    editFirstName.trim() !== '' &&
+    editLastName.trim() !== '' &&
+    editGender != null &&
+    editCountry != null &&
+    editMobile.trim() !== ''
+  // Disabled unless there's both something valid to submit AND something
+  // that actually differs from what's already saved — the "keep it
+  // disabled until something changed" requirement.
+  const canSubmitProfile = canSaveProfile && isDirty
 
   // Reuses auth.completeProfile — it's an upsert keyed on user_id (see
   // userProfileRepository.ts's own doc comment: "resubmitting the
@@ -596,31 +809,51 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
   // saving from either tab sends every current draft field, not just the
   // ones in that tab.
   async function handleSaveProfile() {
-    if (!canSaveProfile) return
+    if (!canSubmitProfile) return
     setSaveProfileError(null)
+    setJustSaved(false)
     setIsSavingProfile(true)
+    // Trimmed once, reused both for the request body and for the new
+    // savedSnapshot/draft baseline below — .trim() on submit must never
+    // leave the button looking dirty again just because the raw draft
+    // still has the untrimmed whitespace the server won't have stored.
+    const trimmed: ProfileDraft = {
+      firstName: editFirstName.trim(),
+      lastName: editLastName.trim(),
+      gender: editGender,
+      country: editCountry,
+      mobile: editMobile.trim(),
+      stayAnonymous: editStayAnonymous,
+      language: editLanguage,
+      timezone: editTimezone,
+    }
     try {
       const res = await fetch('/api/trpc/auth.completeProfile', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          firstName: editFirstName.trim(),
-          lastName: editLastName.trim(),
-          country: String(editCountry),
-          mobileNumber: editMobile.trim(),
-          stayAnonymous: editStayAnonymous,
-          language: editLanguage,
-          timezone: editTimezone,
+          firstName: trimmed.firstName,
+          lastName: trimmed.lastName,
+          gender: String(trimmed.gender),
+          country: String(trimmed.country),
+          mobileNumber: trimmed.mobile,
+          stayAnonymous: trimmed.stayAnonymous,
+          language: trimmed.language,
+          timezone: trimmed.timezone,
         }),
       })
       if (!res.ok) throw new Error('error')
       // Applied here too, not just via PreferencesProvider's effect off
       // the refetched profile below — that effect fires after the refetch
-      // resolves, which would otherwise show this very toast in the
-      // language the user just switched away from.
+      // resolves, which would otherwise apply the change in the language
+      // the user just switched away from.
       if (editLanguage !== i18n.language) await i18n.changeLanguage(editLanguage)
+      setEditFirstName(trimmed.firstName)
+      setEditLastName(trimmed.lastName)
+      setEditMobile(trimmed.mobile)
+      setSavedSnapshot(trimmed)
+      setJustSaved(true)
       refetch()
-      addToast(t('actions.saved'), { variant: 'safe' })
     } catch {
       setSaveProfileError(t('errors.saveFailed'))
     } finally {
@@ -629,49 +862,55 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
   }
 
   const navItems: { id: AccountModalSection; label: string }[] = [
-    { id: 'preferences', label: t('nav.preferences') },
     { id: 'profile', label: t('nav.profile') },
-    { id: 'settings', label: t('nav.settings') },
+    { id: 'preferences', label: t('nav.preferences') },
     { id: 'privacy', label: t('nav.privacy') },
   ]
 
   return (
     <Modal isOpen={isOpen} onOpenChange={onOpenChange} title={t('account.title')} className="dash-account-modal">
-      <div style={{ display: 'flex', gap: 'var(--space-5)', minHeight: 320 }}>
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 2,
-            width: 160,
-            flexShrink: 0,
-            borderRight: '0.5px solid var(--border-subtle)',
-            paddingRight: 'var(--space-4)',
-          }}
-        >
-          {navItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className="dash-account-modal__nav-item"
-              aria-current={section === item.id}
-              onClick={() => setSection(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
-          <div style={{ marginTop: 'auto', paddingTop: 'var(--space-3)', borderTop: '0.5px solid var(--border-subtle)' }}>
-            <button
-              type="button"
-              className="dash-account-modal__nav-item dash-account-modal__nav-item--urgent"
-              onClick={() => void handleLogout(t)}
-            >
-              {t('nav.logOut')}
-            </button>
+      <div className="dash-account-modal__viewport">
+        <div className={['dash-account-modal__body', mobileDetailOpen && 'dash-account-modal__body--detail'].filter(Boolean).join(' ')}>
+          <div className="dash-account-modal__nav">
+            <div className="dash-account-modal__nav-title">{t('account.title')}</div>
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="dash-account-modal__nav-item"
+                aria-current={section === item.id}
+                onClick={() => {
+                  setSection(item.id)
+                  setMobileDetailOpen(true)
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+            <div style={{ marginTop: 'auto', paddingTop: 'var(--space-3)', borderTop: '0.5px solid var(--border-subtle)' }}>
+              <button
+                type="button"
+                className="dash-account-modal__nav-item dash-account-modal__nav-item--urgent"
+                onClick={() => void handleLogout(t)}
+                style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              >
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M6 2H3.5A1.5 1.5 0 002 3.5v9A1.5 1.5 0 003.5 14H6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M10.5 11l3-3-3-3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M13.5 8H6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                {t('nav.logOut')}
+              </button>
+            </div>
           </div>
-        </div>
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-          {section === 'preferences' && (
+          <div className="dash-account-modal__content">
+            <button type="button" className="dash-account-modal__back" onClick={() => setMobileDetailOpen(false)}>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M10 3L5 8l5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              {dt('accountModal.back')}
+            </button>
+            {section === 'preferences' && (
             <>
               <div style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-bold)' as unknown as number }}>
                 {t('nav.preferences')}
@@ -723,18 +962,29 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
                     </Select>
                   </div>
 
+                  {/* Appearance applies immediately via toggleTheme — it isn't
+                      part of the draft/save flow the rest of this section
+                      uses, just co-located here since Preferences absorbed
+                      the old standalone Settings tab. */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-4)' }}>
+                    <div>
+                      <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>{dt('accountModal.appearance')}</div>
+                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>{dt('accountModal.appearanceHint')}</div>
+                    </div>
+                    <Switch isSelected={theme === 'dark'} onChange={toggleTheme} />
+                  </div>
+
                   {saveProfileError && <Alert variant="urgent">{saveProfileError}</Alert>}
 
-                  <Button
-                    variant="safe"
-                    className="dash-account-modal__save-btn"
+                  <SaveProfileRow
                     isPending={isSavingProfile}
-                    isDisabled={!canSaveProfile}
-                    onPress={() => void handleSaveProfile()}
-                    style={{ alignSelf: 'flex-end', marginTop: 'var(--space-2)' }}
-                  >
-                    {t('actions.saveChanges')}
-                  </Button>
+                    canSubmit={canSubmitProfile}
+                    justSaved={justSaved}
+                    isDirty={isDirty}
+                    savedLabel={t('actions.saved')}
+                    saveLabel={t('actions.saveChanges')}
+                    onSave={() => void handleSaveProfile()}
+                  />
                 </div>
               )}
             </>
@@ -782,6 +1032,24 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
                     <div style={{ flex: '1 1 140px' }}>
                       <Select
                         className="dash-account-modal__field"
+                        label={dt('accountModal.gender')}
+                        placeholder={dt('accountModal.genderPlaceholder')}
+                        selectedKey={editGender}
+                        onSelectionChange={setEditGender}
+                      >
+                        {GENDERS.map((g) => (
+                          <SelectItem key={g} id={g}>
+                            {dt(`accountModal.gender_${g}`)}
+                          </SelectItem>
+                        ))}
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                    <div style={{ flex: '1 1 140px' }}>
+                      <Select
+                        className="dash-account-modal__field"
                         label={dt('accountModal.country')}
                         placeholder={dt('accountModal.countryPlaceholder')}
                         selectedKey={editCountry}
@@ -819,32 +1087,17 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
 
                   {saveProfileError && <Alert variant="urgent">{saveProfileError}</Alert>}
 
-                  <Button
-                    variant="safe"
-                    className="dash-account-modal__save-btn"
+                  <SaveProfileRow
                     isPending={isSavingProfile}
-                    isDisabled={!canSaveProfile}
-                    onPress={() => void handleSaveProfile()}
-                    style={{ alignSelf: 'flex-end', marginTop: 'var(--space-2)' }}
-                  >
-                    {t('actions.saveChanges')}
-                  </Button>
+                    canSubmit={canSubmitProfile}
+                    justSaved={justSaved}
+                    isDirty={isDirty}
+                    savedLabel={t('actions.saved')}
+                    saveLabel={t('actions.saveChanges')}
+                    onSave={() => void handleSaveProfile()}
+                  />
                 </div>
               )}
-            </>
-          )}
-          {section === 'settings' && (
-            <>
-              <div style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-bold)' as unknown as number }}>
-                {dt('accountModal.settings')}
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-4)' }}>
-                <div>
-                  <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>{dt('accountModal.appearance')}</div>
-                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>{dt('accountModal.appearanceHint')}</div>
-                </div>
-                <Switch isSelected={theme === 'dark'} onChange={toggleTheme} />
-              </div>
             </>
           )}
           {section === 'privacy' && (
@@ -866,6 +1119,7 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
               </a>
             </>
           )}
+          </div>
         </div>
       </div>
     </Modal>
@@ -898,14 +1152,18 @@ function formatMessageTimestamp(iso: string, timeZone: string): string {
   return `${date}, ${time}`
 }
 
-function statusSubtitle(summary: SessionSummary, timeZone: string, t: TFunction<'dashboard'>): string {
+// Returns null for the "Anonymous by default" case — that's true of
+// every session and not worth a permanent line in the header; only
+// return text when it's actually telling the user something (ended, or
+// a future start time).
+function statusSubtitle(summary: SessionSummary, timeZone: string, t: TFunction<'session'>): string | null {
   if (summary.status === 'completed' || summary.status === 'cancelled') return t('status.ended')
-  if (summary.status === 'active') return t('status.anonymousByDefault')
+  if (summary.status === 'active') return null
   if (summary.scheduledAt) return t('status.startsAt', { time: formatScheduledAt(summary.scheduledAt, timeZone) })
-  return t('status.anonymousByDefault')
+  return null
 }
 
-function emptyStateText(summary: SessionSummary, t: TFunction<'dashboard'>): string {
+function emptyStateText(summary: SessionSummary, t: TFunction<'session'>): string {
   if (summary.status === 'completed' || summary.status === 'cancelled') {
     return t('emptyState.ended')
   }
@@ -939,7 +1197,7 @@ function RecentVisitsList({
   search: string
   onSelect: (id: string) => void
 }) {
-  const { t } = useTranslation('dashboard')
+  const { t } = useTranslation('session')
   const trimmed = search.trim()
   const { effectiveTimeZone } = usePreferences()
   const rowRefs = useRef(new Map<string, HTMLDivElement>())
@@ -1078,7 +1336,7 @@ function CenterPanelLoadingOverlay({ exiting }: { exiting: boolean }) {
 // when the currently-selected session can't load, since a session
 // switch never remounts the shell any more.
 function CenterPanelMessage({ code, title, message }: { code?: number; title: string; message: string }) {
-  const { t } = useTranslation('dashboard')
+  const { t } = useTranslation('session')
   return (
     <div style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 'var(--space-6)' }}>
       <div style={{ maxWidth: 360, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -1123,6 +1381,49 @@ type DashboardLoadState =
   | { status: 'ready'; summary: SessionSummary }
   | { status: 'error'; kind: 'not_found' | 'full' | 'error' }
 
+// Paper-plane send icon, in the style Telegram uses on its own send button —
+// icon-only reads across languages without needing a translated label on the
+// button face itself (an aria-label still carries the translated name for
+// screen readers).
+function SendIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+    </svg>
+  )
+}
+
+// Mobile-only stand-in for the desktop avatar row + offline dropdown —
+// one icon that opens a combined participants panel instead.
+function UsersIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="9" cy="8" r="3.2" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+      <path d="M15.5 4.3a3.2 3.2 0 010 6.2M17.5 20c0-2.7-1.1-4.9-3-6.1" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+// A collapsible section header + chevron, shared by the mobile
+// participants panel's "offline" toggle — a plain button rather than
+// <details>/<summary> so its open state can be reset from outside (see
+// mobilePanelOpen's collapse-on-close effect).
+function ChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      width="10"
+      height="10"
+      viewBox="0 0 10 10"
+      fill="none"
+      aria-hidden="true"
+      style={{ transform: expanded ? 'rotate(180deg)' : undefined, transition: 'transform var(--duration-fast) var(--easing-standard)' }}
+    >
+      <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 // Everything below the shell that changes with the selected session: the
 // join/guidelines state machine, the live chat (messages/roster/turn),
 // the composer, and scroll tracking. Deliberately NOT remounted per
@@ -1144,7 +1445,7 @@ function SessionCenterPanel({
   onReportableChange: (reportable: Member[]) => void
   onVisited: () => void
 }) {
-  const { t } = useTranslation('dashboard')
+  const { t } = useTranslation('session')
   const [loadState, setLoadState] = useState<DashboardLoadState>({ status: 'checking' })
   const { userId: myUserId } = useWhoAmI()
   const { effectiveTimeZone } = usePreferences()
@@ -1247,7 +1548,6 @@ function SessionCenterPanel({
     messages,
     error: chatError,
     send,
-    lastJoinedEvent,
     loadOlderMessages,
     hasOlderMessages,
     loadingOlderMessages,
@@ -1289,6 +1589,13 @@ function SessionCenterPanel({
   const [crisisResource, setCrisisResource] = useState<CrisisResource | null>(null)
   const [offlinePanelOpen, setOfflinePanelOpen] = useState(false)
   const offlinePanelRef = useRef<HTMLDivElement>(null)
+  // Mobile-only: the avatar row + offline dropdown above collapse into a
+  // single icon button that opens a right-side drawer (mirroring the
+  // left-side session-list drawer) — online members always shown,
+  // offline members behind their own collapse toggle so a large
+  // past-participant list doesn't dominate a small screen.
+  const [mobilePanelOpen, setMobilePanelOpen] = useState(false)
+  const [mobileOfflineExpanded, setMobileOfflineExpanded] = useState(false)
   const [autoSendEnabled, setAutoSendEnabledState] = useState(getInitialAutoSend)
   const [sendMenuOpen, setSendMenuOpen] = useState(false)
 
@@ -1299,7 +1606,12 @@ function SessionCenterPanel({
 
   const roster = sessionState?.roster ?? []
   const isYourTurn = sessionState?.currentTurnUserId !== null && sessionState?.currentTurnUserId === myUserId
-  const members = roster.map((r) => memberFor(r.userId, roster, myUserId))
+  // Memoized: this component also holds `draft`, so every keystroke in
+  // the composer re-renders it — without memoizing on the (stable
+  // between actual roster/message updates) `roster`/`messages`
+  // references, these would otherwise be rebuilt from scratch on every
+  // single keystroke for no reason.
+  const members = useMemo(() => roster.map((r) => memberFor(r.userId, roster, myUserId)), [roster, myUserId])
 
   // Split the roster into who's actually here right now vs. who has
   // ever been here — the header row only ever shows the former, so it
@@ -1310,9 +1622,26 @@ function SessionCenterPanel({
   // conversation, and surfacing them just adds noise (this also quietly
   // keeps stray test/ghost joins out of the list).
   const onlineUserIds = sessionState?.onlineUserIds ?? []
-  const messagedUserIds = new Set(messages.map((m) => m.userId))
-  const onlineMembers = members.filter((m) => onlineUserIds.includes(m.userId))
-  const offlineMembers = members.filter((m) => !onlineUserIds.includes(m.userId) && messagedUserIds.has(m.userId))
+  // 'system' rows (a join marker) don't count as "said something" —
+  // otherwise everyone who's ever joined would immediately qualify for
+  // the offline list even if they never sent a real message.
+  const messagedUserIds = useMemo(() => new Set(messages.filter((m) => m.type === 'user').map((m) => m.userId)), [messages])
+  const onlineMembers = useMemo(() => members.filter((m) => onlineUserIds.includes(m.userId)), [members, onlineUserIds])
+  const offlineMembers = useMemo(
+    () => members.filter((m) => !onlineUserIds.includes(m.userId) && messagedUserIds.has(m.userId)),
+    [members, onlineUserIds, messagedUserIds],
+  )
+  // Keyed lookup with a stable Member object per userId — MessageRow is
+  // memoized on shallow prop equality, so handing it a freshly-built
+  // object from memberFor(...) on every render (as before) would defeat
+  // that memoization just as badly as not memoizing at all.
+  const memberByUserId = useMemo(() => {
+    const map = new Map<string, Member>()
+    for (const m of messages) {
+      if (!map.has(m.userId)) map.set(m.userId, memberFor(m.userId, roster, myUserId))
+    }
+    return map
+  }, [messages, roster, myUserId])
 
   useEffect(() => {
     if (!offlinePanelOpen) return
@@ -1325,26 +1654,12 @@ function SessionCenterPanel({
     return () => document.removeEventListener('pointerdown', handlePointerDown)
   }, [offlinePanelOpen])
 
-  // Live join notification — websocket-service pushes this the moment
-  // someone else joins (see internalController.ts's createJoinTurnHandler);
-  // the roster/avatar count above already updates from the accompanying
-  // (separately-arriving) roster-update frame, this is just the toast.
-  // Labeled from the event's own turnOrder, not a lookup into `roster` —
-  // that array may not have caught up to this same join yet, since the
-  // two frames are independent WS messages with no ordering guarantee
-  // between them. Never fires for the current user's own join: this hook
-  // isn't even connected yet at that point (enabled only once this
-  // session's own join+guidelines gate has already resolved).
+  // Collapse the offline section again each time the panel is closed, so
+  // reopening it always starts from the same compact "online only" state
+  // rather than remembering whatever was expanded last time.
   useEffect(() => {
-    if (!lastJoinedEvent) return
-    const label = memberFor(
-      lastJoinedEvent.userId,
-      [{ userId: lastJoinedEvent.userId, turnOrder: lastJoinedEvent.turnOrder }],
-      myUserId,
-    ).label
-    addToast(`${label} joined the circle`, { variant: 'safe' })
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new join event should re-fire this; myUserId is read live, not tracked as a dep
-  }, [lastJoinedEvent])
+    if (!mobilePanelOpen) setMobileOfflineExpanded(false)
+  }, [mobilePanelOpen])
 
   // Lifts the reportable roster up to the shell, which owns
   // ReportSessionModal — it needs to live at the shell level regardless,
@@ -1403,8 +1718,10 @@ function SessionCenterPanel({
 
   async function autoSkipTurn() {
     try {
+      // Deliberately no toast on a successful skip — it fires while the
+      // user may be mid-scroll reading older messages, and a toast
+      // popping up over that is more disruptive than the skip itself.
       await skipTurn(sessionId)
-      addToast(t('errors.turnSkipped'), { variant: 'info' })
     } catch (err) {
       // The same account open in more than one tab/window each runs its
       // own local countdown — if both race to skip the same turn, the
@@ -1620,6 +1937,7 @@ function SessionCenterPanel({
     )
   } else if (displayedSummary) {
     const summary = displayedSummary
+    const subtitle = statusSubtitle(summary, effectiveTimeZone, t)
     content = (
       <>
         <div
@@ -1629,11 +1947,11 @@ function SessionCenterPanel({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            flexWrap: 'wrap',
+            flexWrap: 'nowrap',
             gap: 'var(--space-3)',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', minWidth: 0, flex: '1 1 auto' }}>
             <button
               type="button"
               className="dash-mobile-toggle"
@@ -1645,87 +1963,204 @@ function SessionCenterPanel({
                 <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
               </svg>
             </button>
-            <div>
-              <div style={{ fontSize: 'var(--font-size-md)', fontWeight: 'var(--font-weight-bold)' as unknown as number, color: 'var(--text-primary)' }}>
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 'var(--font-size-md)',
+                  fontWeight: 'var(--font-weight-bold)' as unknown as number,
+                  color: 'var(--text-primary)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
                 {visitDisplayName(summary)}
               </div>
-              <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginTop: 2 }}>
-                {statusSubtitle(summary, effectiveTimeZone, t)}
-              </div>
+              {subtitle && (
+                <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginTop: 2 }}>{subtitle}</div>
+              )}
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {onlineMembers.map((m) => (
-              <MemberAvatar key={m.userId} member={m} size={28} ringed={m.userId === sessionState?.currentTurnUserId} online />
-            ))}
-            {offlineMembers.length > 0 && (
-              <div ref={offlinePanelRef} style={{ position: 'relative' }}>
-                <button
-                  type="button"
-                  aria-label={t('panel.showOfflineParticipants', { count: offlineMembers.length })}
-                  aria-expanded={offlinePanelOpen}
-                  onClick={() => setOfflinePanelOpen((v) => !v)}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginLeft: 'auto', flex: 'none' }}>
+            <ThemeToggle />
+            <div className="dash-header-participants--desktop">
+              {onlineMembers.map((m) => (
+                <MemberAvatar key={m.userId} member={m} size={28} ringed={m.userId === sessionState?.currentTurnUserId} online />
+              ))}
+              {offlineMembers.length > 0 && (
+                <div ref={offlinePanelRef} style={{ position: 'relative' }}>
+                  <button
+                    type="button"
+                    aria-label={t('panel.showOfflineParticipants', { count: offlineMembers.length })}
+                    aria-expanded={offlinePanelOpen}
+                    onClick={() => setOfflinePanelOpen((v) => !v)}
+                    style={{
+                      width: 28,
+                      height: 28,
+                      flex: 'none',
+                      borderRadius: '50%',
+                      border: '1px dashed var(--border-strong)',
+                      background: offlinePanelOpen ? 'var(--surface-sunken)' : 'transparent',
+                      color: 'var(--text-secondary)',
+                      fontSize: 10,
+                      fontWeight: 'var(--font-weight-bold)' as unknown as number,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    +{offlineMembers.length}
+                  </button>
+                  {offlinePanelOpen && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: 'calc(100% + 6px)',
+                        right: 0,
+                        zIndex: 20,
+                        width: 200,
+                        maxWidth: 'calc(100vw - 32px)',
+                        boxSizing: 'border-box',
+                        background: 'var(--surface-raised)',
+                        border: '1px solid var(--border-strong)',
+                        borderRadius: 8,
+                        padding: 8,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 4,
+                        boxShadow: 'var(--shadow-md)',
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: 'var(--font-size-xs)',
+                          color: 'var(--text-secondary)',
+                          fontWeight: 'var(--font-weight-medium)' as unknown as number,
+                          padding: '2px 6px 6px',
+                        }}
+                      >
+                        {t('panel.notCurrentlyOnline')}
+                      </div>
+                      {offlineMembers.map((m) => (
+                        <div key={m.userId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px' }}>
+                          <MemberAvatar member={m} size={24} />
+                          <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>{m.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', marginLeft: 4 }}>
+                {t('panel.userCount', { count: onlineMembers.length })}
+              </span>
+            </div>
+            <div className="dash-header-participants--mobile" style={{ position: 'relative' }}>
+              <IconButton
+                icon={<UsersIcon />}
+                label={t('panel.participantsButton', { count: onlineMembers.length })}
+                aria-expanded={mobilePanelOpen}
+                onClick={() => setMobilePanelOpen(true)}
+              />
+              {onlineMembers.length > 0 && (
+                <span
+                  aria-hidden="true"
                   style={{
-                    width: 28,
-                    height: 28,
-                    flex: 'none',
-                    borderRadius: '50%',
-                    border: '1px dashed var(--border-strong)',
-                    background: offlinePanelOpen ? 'var(--surface-sunken)' : 'transparent',
-                    color: 'var(--text-secondary)',
+                    position: 'absolute',
+                    top: -2,
+                    right: -2,
+                    minWidth: 16,
+                    height: 16,
+                    padding: '0 4px',
+                    borderRadius: 'var(--radius-full)',
+                    background: 'var(--accent-safe)',
+                    color: 'var(--text-on-accent)',
                     fontSize: 10,
                     fontWeight: 'var(--font-weight-bold)' as unknown as number,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
+                    boxShadow: '0 0 0 2px var(--surface-app)',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  {onlineMembers.length}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {mobilePanelOpen && <div className="dash-participants-drawer-backdrop" onClick={() => setMobilePanelOpen(false)} />}
+        <div className={['dash-participants-drawer', mobilePanelOpen && 'dash-participants-drawer--open'].filter(Boolean).join(' ')}>
+          <div className="dash-participants-drawer__header">
+            <span style={{ fontSize: 'var(--font-size-md)', fontWeight: 'var(--font-weight-bold)' as unknown as number, color: 'var(--text-primary)' }}>
+              {t('panel.participantsTitle')}
+            </span>
+            <IconButton
+              icon={
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M3 3l10 10M13 3L3 13" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+                </svg>
+              }
+              label={t('panel.closeParticipants')}
+              onClick={() => setMobilePanelOpen(false)}
+            />
+          </div>
+          <div className="dash-participants-drawer__list">
+            <div
+              style={{
+                fontSize: 'var(--font-size-xs)',
+                color: 'var(--text-secondary)',
+                fontWeight: 'var(--font-weight-medium)' as unknown as number,
+                padding: '2px 6px 6px',
+              }}
+            >
+              {t('panel.onlineSectionLabel')}
+            </div>
+            {onlineMembers.map((m) => (
+              <div key={m.userId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px' }}>
+                <MemberAvatar member={m} size={28} ringed={m.userId === sessionState?.currentTurnUserId} online />
+                <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>{m.label}</span>
+              </div>
+            ))}
+            {offlineMembers.length > 0 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setMobileOfflineExpanded((v) => !v)}
+                  aria-expanded={mobileOfflineExpanded}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    width: '100%',
+                    gap: 6,
+                    marginTop: 6,
+                    padding: '8px 6px',
+                    border: 'none',
+                    borderTop: '0.5px solid var(--border-subtle)',
+                    background: 'none',
+                    fontFamily: 'var(--font-family-base)',
+                    fontSize: 'var(--font-size-xs)',
+                    color: 'var(--text-secondary)',
+                    fontWeight: 'var(--font-weight-medium)' as unknown as number,
                     cursor: 'pointer',
                   }}
                 >
-                  +{offlineMembers.length}
+                  {t('panel.offlineToggle', { count: offlineMembers.length })}
+                  <ChevronIcon expanded={mobileOfflineExpanded} />
                 </button>
-                {offlinePanelOpen && (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      top: 'calc(100% + 6px)',
-                      right: 0,
-                      zIndex: 20,
-                      width: 200,
-                      boxSizing: 'border-box',
-                      background: 'var(--surface-raised)',
-                      border: '1px solid var(--border-strong)',
-                      borderRadius: 8,
-                      padding: 8,
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: 4,
-                      boxShadow: 'var(--shadow-md)',
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: 'var(--font-size-xs)',
-                        color: 'var(--text-secondary)',
-                        fontWeight: 'var(--font-weight-medium)' as unknown as number,
-                        padding: '2px 6px 6px',
-                      }}
-                    >
-                      {t('panel.notCurrentlyOnline')}
+                {mobileOfflineExpanded &&
+                  offlineMembers.map((m) => (
+                    <div key={m.userId} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px' }}>
+                      <MemberAvatar member={m} size={28} />
+                      <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>{m.label}</span>
                     </div>
-                    {offlineMembers.map((m) => (
-                      <div key={m.userId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 6px' }}>
-                        <MemberAvatar member={m} size={24} />
-                        <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>{m.label}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
+                  ))}
+              </>
             )}
-            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', marginLeft: 4 }}>
-              {t('panel.userCount', { count: onlineMembers.length })}
-            </span>
-            <ThemeToggle />
           </div>
         </div>
 
@@ -1744,7 +2179,10 @@ function SessionCenterPanel({
             }}
           >
             {chatError && <Alert variant="urgent">{chatError}</Alert>}
-            {!chatError && messages.length === 0 && (
+            {/* messagedUserIds already excludes system rows (see its own
+                comment above) — empty means no *real* message yet, even
+                if a "joined" marker is already showing below. */}
+            {!chatError && messagedUserIds.size === 0 && (
               <div style={{ margin: 'auto', color: 'var(--text-secondary)', fontSize: 'var(--font-size-sm)', textAlign: 'center', maxWidth: 320 }}>
                 {emptyStateText(summary, t)}
               </div>
@@ -1759,40 +2197,25 @@ function SessionCenterPanel({
                 </div>
               </div>
             )}
-            {messages.map((m: ChatMessage) => {
-              const member = memberFor(m.userId, roster, myUserId)
-              return (
-                <div key={m.id} style={{ display: 'flex', gap: 10, maxWidth: 560 }}>
-                  <MemberAvatar member={member} size={32} />
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    <span style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-                      <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>{member.label}</span>
-                      <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', opacity: 0.7 }}>
-                        {formatMessageTimestamp(m.createdAt, effectiveTimeZone)}
-                      </span>
-                    </span>
-                    <div
-                      style={{
-                        background: m.userId === myUserId ? 'var(--accent-safe-surface)' : 'var(--surface-raised)',
-                        border: '0.5px solid var(--border-subtle)',
-                        borderRadius: 'var(--radius-md)',
-                        padding: 'var(--space-3) var(--space-4)',
-                        fontSize: 'var(--font-size-sm)',
-                        color: 'var(--text-primary)',
-                        lineHeight: 'var(--line-height-base)',
-                        // Plain text content collapses newlines by default —
-                        // without this a Shift+Enter-composed message reads
-                        // back as one run-on line.
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      {m.body}
-                    </div>
-                  </div>
-                </div>
-              )
-            })}
+            {messages.map((m) =>
+              m.type === 'system' ? (
+                <JoinEventRow
+                  key={m.id}
+                  message={m}
+                  member={memberByUserId.get(m.userId) ?? memberFor(m.userId, roster, myUserId)}
+                  timeZone={effectiveTimeZone}
+                  t={t}
+                />
+              ) : (
+                <MessageRow
+                  key={m.id}
+                  message={m}
+                  member={memberByUserId.get(m.userId) ?? memberFor(m.userId, roster, myUserId)}
+                  isOwn={m.userId === myUserId}
+                  timeZone={effectiveTimeZone}
+                />
+              ),
+            )}
           </div>
           {newMessageCount > 0 && (
             <button
@@ -1897,17 +2320,18 @@ function SessionCenterPanel({
                   void sendNow()
                 }
               }}
-              placeholder={isYourTurn ? t('composer.placeholderYourTurn') : t('composer.placeholderWaiting')}
+              placeholder={t('composer.placeholder')}
             />
             <div className="dash-composer-actions--desktop">
               <div className="dash-send-split">
                 <button
                   type="button"
                   className="dash-send-split__main"
+                  aria-label={t('composer.send')}
                   disabled={!isYourTurn || isSending || !draft.trim()}
                   onClick={() => void sendNow()}
                 >
-                  {isSending ? <Spinner size={14} /> : t('composer.send')}
+                  {isSending ? <Spinner size={14} /> : <SendIcon />}
                 </button>
                 <button
                   type="button"
@@ -1937,10 +2361,11 @@ function SessionCenterPanel({
                 <button
                   type="button"
                   className="dash-send-split__main"
+                  aria-label={t('composer.send')}
                   disabled={!isYourTurn || isSending || !draft.trim()}
                   onClick={() => void sendNow()}
                 >
-                  {isSending ? <Spinner size={14} /> : t('composer.send')}
+                  {isSending ? <Spinner size={14} /> : <SendIcon />}
                 </button>
                 <button
                   type="button"
@@ -1979,8 +2404,8 @@ function SessionCenterPanel({
   )
 }
 
-export function DashboardPage({ sessionId, onNavigate }: { sessionId: string; onNavigate: (sessionId: string) => void }) {
-  const { t } = useTranslation('dashboard')
+export function SessionPage({ sessionId, onNavigate }: { sessionId: string; onNavigate: (sessionId: string) => void }) {
+  const { t } = useTranslation('session')
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
   const [newSessionOpen, setNewSessionOpen] = useState(false)
@@ -2165,7 +2590,7 @@ export function DashboardPage({ sessionId, onNavigate }: { sessionId: string; on
 
   return (
     <div className="dash-root" style={{ display: 'flex', height: '100%', fontFamily: 'var(--font-family-base)', background: 'var(--surface-app)' }}>
-      <ReportSessionModal isOpen={reportOpen} onOpenChange={setReportOpen} reportable={reportable} />
+      <ReportSessionModal isOpen={reportOpen} onOpenChange={setReportOpen} sessionId={sessionId} reportable={reportable} />
       <NewSessionModal isOpen={newSessionOpen} onOpenChange={setNewSessionOpen} onJoined={(id) => onNavigate(id)} />
       <AccountModal isOpen={accountModalOpen} onOpenChange={setAccountModalOpen} />
 
@@ -2206,7 +2631,7 @@ export function DashboardPage({ sessionId, onNavigate }: { sessionId: string; on
       />
 
       {/* Desktop-only companion column for rightPanelContent — hidden
-          below 768px (see DashboardPage.css's .dash-right rule), where
+          below 768px (see SessionPage.css's .dash-right rule), where
           the same content instead lives in the mobile drawer's footer
           above. */}
       <div

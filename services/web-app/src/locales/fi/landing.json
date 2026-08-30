@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "MinCirklen — Anonyymejä, moderoituja vertaistukipiirejä",
+    "description": "MinCirklen on anonyymi, tekoälyn moderoima vertaistukialusta. Ei profiileja, ei hakemistoa, ei tapaa etsiä ketään — vain pieniä, moderoituja piirejä, joissa tulla kuulluksi."
+  },
   "header": {
     "about": "Tietoa",
     "safety": "Turvallisuus",

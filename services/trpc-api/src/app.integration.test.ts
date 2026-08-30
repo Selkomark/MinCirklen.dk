@@ -121,6 +121,7 @@ describe('auth flow through the Hono app', () => {
     const input = {
       firstName: 'Ada',
       lastName: 'Lovelace',
+      gender: 'other',
       country: 'GB',
       mobileNumber: '+44 20 7946 0958',
       stayAnonymous: true,
@@ -160,6 +161,7 @@ describe('auth flow through the Hono app', () => {
       body: JSON.stringify({
         firstName: 'Ada',
         lastName: 'Lovelace',
+        gender: 'other',
         country: 'GB',
         mobileNumber: '+44 20 7946 0958',
         stayAnonymous: true,
@@ -198,6 +200,7 @@ describe('auth flow through the Hono app', () => {
       body: JSON.stringify({
         firstName: 'Grace',
         lastName: 'Hopper',
+        gender: 'other',
         country: 'US',
         mobileNumber: '+1 202 555 0119',
         stayAnonymous: false,
@@ -238,6 +241,7 @@ describe('auth flow through the Hono app', () => {
       body: JSON.stringify({
         firstName: 'Ada',
         lastName: 'Lovelace',
+        gender: 'other',
         country: 'GB',
         mobileNumber: '+44 20 7946 0958',
         stayAnonymous: true,

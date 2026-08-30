@@ -6,6 +6,9 @@ import { z } from 'zod'
 export const SUPPORTED_LANGUAGES = ['en', 'sv', 'da', 'nb', 'fi'] as const
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number]
 
+export const GENDERS = ['male', 'female', 'other'] as const
+export type Gender = (typeof GENDERS)[number]
+
 // Intl.supportedValuesOf('timeZone') is the runtime-authoritative IANA zone
 // list (Node/Bun both implement it) — validating against it here means a
 // bad zone name can never reach the DB, with no hand-maintained zone list.
@@ -21,6 +24,7 @@ const isValidTimeZone = (tz: string): boolean => Intl.supportedValuesOf('timeZon
 export const createUserProfileInputSchema = z.object({
   firstName: z.string().trim().min(1).max(100),
   lastName: z.string().trim().min(1).max(100),
+  gender: z.enum(GENDERS),
   country: z.string().trim().length(2),
   mobileNumber: z.string().trim().min(1).max(32),
   stayAnonymous: z.boolean(),
@@ -42,6 +46,7 @@ export const userProfileSchema = z.object({
   userId: z.string().uuid(),
   firstName: z.string(),
   lastName: z.string(),
+  gender: z.enum(GENDERS),
   country: z.string(),
   mobileNumber: z.string(),
   stayAnonymous: z.boolean(),

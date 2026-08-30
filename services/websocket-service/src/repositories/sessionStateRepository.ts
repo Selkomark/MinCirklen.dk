@@ -32,9 +32,9 @@ export async function getPostgresTurnState(db: Kysely<Database>, sessionId: stri
   return { currentTurnUserId: session.current_turn_user_id, roster }
 }
 
-// Best-effort, fire-and-forget crash-recovery mirror (see
-// controllers/internalController.ts's advance handler for the
-// fire-and-forget wrapping) — Postgres's own current_turn_user_id/
+// Best-effort, fire-and-forget crash-recovery mirror (see rpcServer.ts's
+// advanceTurn RPC for the fire-and-forget wrapping) — Postgres's own
+// current_turn_user_id/
 // turn_claimed_at columns are no longer read for authority once Redis
 // holds this session's turn state, only kept close to it so a Redis
 // eviction (before AOF is provisioned — see docs/roadmap.md's Appendix C

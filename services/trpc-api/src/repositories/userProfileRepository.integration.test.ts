@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { DEFAULT_LOCAL_DATABASE_URL, createDb, createPgPool, runMigrations } from '@mincirklen/shared'
-import { findUserProfileByUserId, upsertUserProfile } from './userProfileRepository'
+import { findDisplayNames, findUserProfileByUserId, upsertUserProfile } from './userProfileRepository'
 
 const pool = createPgPool(
   process.env.TEST_DATABASE_URL ?? DEFAULT_LOCAL_DATABASE_URL,
@@ -33,6 +33,7 @@ describe('userProfileRepository', () => {
       userId: user.id,
       firstName: 'Ada',
       lastName: 'Lovelace',
+      gender: 'other',
       country: 'GB',
       mobileNumber: '+44 20 7946 0958',
       stayAnonymous: true,
@@ -55,6 +56,7 @@ describe('userProfileRepository', () => {
       userId: user.id,
       firstName: 'Ada',
       lastName: 'Lovelace',
+      gender: 'other',
       country: 'GB',
       mobileNumber: '+44 20 7946 0958',
       stayAnonymous: true,
@@ -82,6 +84,7 @@ describe('userProfileRepository', () => {
       userId: user.id,
       firstName: 'Ada',
       lastName: 'Lovelace',
+      gender: 'other',
       country: 'GB',
       mobileNumber: '+44 20 7946 0958',
       stayAnonymous: true,
@@ -92,6 +95,7 @@ describe('userProfileRepository', () => {
       userId: user.id,
       firstName: 'Grace',
       lastName: 'Hopper',
+      gender: 'other',
       country: 'US',
       mobileNumber: '+1 202 555 0119',
       stayAnonymous: false,
@@ -110,5 +114,68 @@ describe('userProfileRepository', () => {
   test('findUserProfileByUserId returns null when no profile exists', async () => {
     const user = await insertTestUser()
     expect(await findUserProfileByUserId(db, KMS, user.id)).toBeNull()
+  })
+
+  describe('findDisplayNames', () => {
+    test('returns an empty map without querying anything for an empty userIds list', async () => {
+      expect(await findDisplayNames(db, KMS, [])).toEqual(new Map())
+    })
+
+    test('only includes members who have turned off stay_anonymous, and omits anyone else', async () => {
+      const named = await insertTestUser()
+      const anonymous = await insertTestUser()
+      const noProfile = await insertTestUser()
+
+      await upsertUserProfile(db, KMS, {
+        userId: named.id,
+        firstName: 'Grace',
+        lastName: 'Hopper',
+        gender: 'other',
+        country: 'US',
+        mobileNumber: '+1 202 555 0119',
+        stayAnonymous: false,
+        termsAcceptedAt: new Date(),
+      })
+      await upsertUserProfile(db, KMS, {
+        userId: anonymous.id,
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        gender: 'other',
+        country: 'GB',
+        mobileNumber: '+44 20 7946 0958',
+        stayAnonymous: true,
+        termsAcceptedAt: new Date(),
+      })
+
+      const result = await findDisplayNames(db, KMS, [named.id, anonymous.id, noProfile.id])
+      expect(result).toEqual(new Map([[named.id, 'Grace']]))
+    })
+
+    test('a member who turns stay_anonymous back on stops appearing on the very next call', async () => {
+      const user = await insertTestUser()
+      await upsertUserProfile(db, KMS, {
+        userId: user.id,
+        firstName: 'Grace',
+        lastName: 'Hopper',
+        gender: 'other',
+        country: 'US',
+        mobileNumber: '+1 202 555 0119',
+        stayAnonymous: false,
+        termsAcceptedAt: new Date(),
+      })
+      expect((await findDisplayNames(db, KMS, [user.id])).get(user.id)).toBe('Grace')
+
+      await upsertUserProfile(db, KMS, {
+        userId: user.id,
+        firstName: 'Grace',
+        lastName: 'Hopper',
+        gender: 'other',
+        country: 'US',
+        mobileNumber: '+1 202 555 0119',
+        stayAnonymous: true,
+        termsAcceptedAt: new Date(),
+      })
+      expect(await findDisplayNames(db, KMS, [user.id])).toEqual(new Map())
+    })
   })
 })

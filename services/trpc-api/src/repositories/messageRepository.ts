@@ -7,6 +7,7 @@ export interface MessageRow {
   sessionId: string
   userId: string
   body: string
+  type: 'user' | 'system'
   createdAt: Date
 }
 
@@ -15,6 +16,7 @@ function toMessageRow(row: {
   session_id: string
   user_id: string
   body: string
+  type: 'user' | 'system'
   created_at: Date
 }): MessageRow {
   return {
@@ -22,17 +24,23 @@ function toMessageRow(row: {
     sessionId: row.session_id,
     userId: row.user_id,
     body: row.body,
+    type: row.type,
     createdAt: row.created_at,
   }
 }
 
+// `type` defaults to 'user' — only sessionRouter.ts's join/visit call
+// sites ever pass 'system', for the "X joined the circle" marker (see
+// migrations/0001_init.ts). `body` is still NOT NULL for a
+// system row; the frontend derives its own display text from `type` +
+// `userId` and ignores body entirely for those.
 export async function insertMessage(
   db: Kysely<Database>,
-  params: { sessionId: string; userId: string; body: string },
+  params: { sessionId: string; userId: string; body: string; type?: 'user' | 'system' },
 ): Promise<MessageRow> {
   const row = await db
     .insertInto('messages')
-    .values({ session_id: params.sessionId, user_id: params.userId, body: params.body })
+    .values({ session_id: params.sessionId, user_id: params.userId, body: params.body, type: params.type ?? 'user' })
     .returningAll()
     .executeTakeFirstOrThrow()
 
@@ -79,6 +87,7 @@ export async function listMessages(db: Kysely<Database>, params: ListMessagesPar
       'session_id',
       'user_id',
       'body',
+      'type',
       'created_at',
       // Text form for the cursor, same precision rationale as
       // sessionRepository.ts's scheduled_at_cursor: created_at is

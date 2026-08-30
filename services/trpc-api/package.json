@@ -10,7 +10,11 @@
     "start": "bun run dist/index.js"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "^2.14.0",
+    "@connectrpc/connect": "^2.1.2",
+    "@connectrpc/connect-node": "^2.1.2",
     "@hono/trpc-server": "^0.4.0",
+    "@mincirklen/proto": "workspace:*",
     "@mincirklen/shared": "workspace:*",
     "@trpc/server": "11.3.1",
     "hono": "^4.6.0",

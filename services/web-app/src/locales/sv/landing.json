@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "MinCirklen — Anonyma, modererade cirklar för kamratstöd",
+    "description": "MinCirklen är en anonym, AI-modererad plattform för kamratstöd. Inga profiler, ingen katalog, inget sätt att slå upp någon — bara små, modererade cirklar att bli hörd i."
+  },
   "header": {
     "about": "Om oss",
     "safety": "Säkerhet",

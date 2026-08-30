@@ -8,7 +8,7 @@ import { PreferencesProvider } from './PreferencesProvider'
 import { ToastRegionRoot } from './components/Toast'
 import { Catalog } from './Catalog'
 import { LandingPage } from './LandingPage'
-import { DashboardPage } from './pages/DashboardPage'
+import { SessionPage } from './pages/SessionPage'
 import { StartPage } from './pages/start/StartPage'
 import { StartJoinPage } from './pages/start/StartJoinPage'
 import { StartNewPage } from './pages/start/StartNewPage'
@@ -29,7 +29,7 @@ export const systemDesignPath = () => `${BASE}system-design`
 export const startPath = () => `${BASE}start`
 export const startJoinPath = () => `${BASE}start/join`
 export const startNewPath = () => `${BASE}start/new`
-export const dashboardPath = (sessionId: string) => `${BASE}s/${sessionId}`
+export const sessionPath = (sessionId: string) => `${BASE}s/${sessionId}`
 export const loginPath = () => `${BASE}login`
 export const registerPath = () => `${BASE}register`
 export const moderationTransparencyPath = () => `${BASE}moderation-transparency`
@@ -40,7 +40,7 @@ type Route =
   | { name: 'start' }
   | { name: 'start-join' }
   | { name: 'start-new' }
-  | { name: 'dashboard'; sessionId: string }
+  | { name: 'session'; sessionId: string }
   | { name: 'public-page'; id: PublicPageId }
   | { name: 'login' }
   | { name: 'register' }
@@ -69,7 +69,7 @@ if (publicPageCollision) {
   )
 }
 
-// The whole app's navigation — landing/system-design/new/dashboard/public pages — lives at
+// The whole app's navigation — landing/system-design/new/session/public pages — lives at
 // real paths (pushState-driven, no full reloads for the in-app views) so every view is a
 // shareable, bookmarkable URL. Public content pages (privacy policy, etc.) are opened via
 // target="_blank" as their own full page loads (see publicPages/PublicPageView.tsx), but
@@ -95,7 +95,7 @@ function parseRoute(pathname: string): Route {
   if (normalized === 'moderation-transparency') return { name: 'moderation-transparency' }
 
   const sessionMatch = normalized.match(/^s\/([^/]+)$/)
-  if (sessionMatch) return { name: 'dashboard', sessionId: sessionMatch[1] }
+  if (sessionMatch) return { name: 'session', sessionId: sessionMatch[1] }
 
   const pageMatch = normalized.match(/^([a-z0-9-]+)$/)
   const pageId = pageMatch?.[1] as PublicPageId | undefined
@@ -178,11 +178,11 @@ export function useAuthStatus(gateKey: string | null): AuthStatus {
 }
 
 // Sensitive routes: real support-circle content (start, start-join,
-// start-new, dashboard) and PII collection (register) — every one of
+// start-new, session) and PII collection (register) — every one of
 // these has a matching protectedProcedure on the backend (see
 // controllers/trpc.ts), this is the UI-side half of the same gate, not a
 // replacement for it.
-const GATED_ROUTE_NAMES = new Set(['login', 'register', 'start', 'start-join', 'start-new', 'dashboard'])
+const GATED_ROUTE_NAMES = new Set(['login', 'register', 'start', 'start-join', 'start-new', 'session'])
 
 function useRoute() {
   const [pathname, setPathname] = useState(() => window.location.pathname)
@@ -205,6 +205,7 @@ function useRoute() {
 
 function Shell() {
   const { t } = useTranslation('errors')
+  const { t: ct } = useTranslation('common')
   const { route, navigate } = useRoute()
 
   const gateKey = GATED_ROUTE_NAMES.has(route.name) ? route.name : null
@@ -227,7 +228,7 @@ function Shell() {
       return
     }
 
-    if (route.name === 'start' || route.name === 'start-join' || route.name === 'start-new' || route.name === 'dashboard') {
+    if (route.name === 'start' || route.name === 'start-join' || route.name === 'start-new' || route.name === 'session') {
       if (authStatus.kind === 'anonymous') {
         navigate(loginPath())
       } else if (authStatus.kind === 'needs-profile') {
@@ -249,17 +250,17 @@ function Shell() {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+    <div className="ds-shell-root" style={{ display: 'flex', flexDirection: 'column' }}>
       <div
         className={[
           'ds-shell-view',
-          route.name === 'dashboard' || route.name === 'system-design' ? 'ds-shell-view--fixed' : 'ds-shell-view--scroll',
+          route.name === 'session' || route.name === 'system-design' ? 'ds-shell-view--fixed' : 'ds-shell-view--scroll',
         ].join(' ')}
       >
         {route.name === 'system-design' && <Catalog />}
         {route.name === 'landing' && <LandingPage />}
         {authStatus.kind === 'verified' &&
-          (route.name === 'dashboard' ||
+          (route.name === 'session' ||
             route.name === 'start' ||
             route.name === 'start-join' ||
             route.name === 'start-new') && (
@@ -271,17 +272,17 @@ function Shell() {
             // may not even be a valid cookie yet.
             <PreferencesProvider>
               <SessionSocketProvider>
-                {route.name === 'dashboard' && (
-                  <DashboardPage sessionId={route.sessionId} onNavigate={(sessionId) => navigate(dashboardPath(sessionId))} />
+                {route.name === 'session' && (
+                  <SessionPage sessionId={route.sessionId} onNavigate={(sessionId) => navigate(sessionPath(sessionId))} />
                 )}
                 {route.name === 'start' && (
                   <StartPage onChooseJoin={() => navigate(startJoinPath())} onChooseNew={() => navigate(startNewPath())} />
                 )}
                 {route.name === 'start-join' && (
-                  <StartJoinPage onBack={() => navigate(startPath())} onComplete={(sessionId) => navigate(dashboardPath(sessionId))} />
+                  <StartJoinPage onBack={() => navigate(startPath())} onComplete={(sessionId) => navigate(sessionPath(sessionId))} />
                 )}
                 {route.name === 'start-new' && (
-                  <StartNewPage onBack={() => navigate(startPath())} onComplete={(sessionId) => navigate(dashboardPath(sessionId))} />
+                  <StartNewPage onBack={() => navigate(startPath())} onComplete={(sessionId) => navigate(sessionPath(sessionId))} />
                 )}
               </SessionSocketProvider>
             </PreferencesProvider>
@@ -291,7 +292,7 @@ function Shell() {
           <RegisterPage onComplete={() => navigate(startPath())} />
         )}
       </div>
-      <ToastRegionRoot />
+      <ToastRegionRoot dismissLabel={ct('toast.dismiss')} />
     </div>
   )
 }

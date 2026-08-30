@@ -52,6 +52,7 @@
     "describePlaceholder": "Kuvaile, mitä tapahtui...",
     "cancel": "Peruuta",
     "submitted": "Ilmoitus koskien: {{about}} lähetetty — moderaattori tarkistaa sen.",
+    "submitError": "Ilmoituksen lähettämisessä tapahtui virhe. Yritä uudelleen.",
     "submit": "Lähetä ilmoitus"
   },
   "newSessionModal": {
@@ -61,17 +62,22 @@
     "createTab": "Aloita piiri"
   },
   "accountModal": {
+    "back": "Takaisin",
     "profile": "Profiili",
     "profileUnavailable": "Profiilisi ei ole juuri nyt saatavilla.",
     "firstName": "Etunimi",
     "lastName": "Sukunimi",
+    "gender": "Sukupuoli",
+    "genderPlaceholder": "Valitse sukupuolesi",
+    "gender_male": "Mies",
+    "gender_female": "Nainen",
+    "gender_other": "Muu",
     "country": "Maa",
     "countryPlaceholder": "Valitse maasi",
     "mobileNumber": "Matkapuhelinnumero",
     "mobileHint": "Matkapuhelinnumeroa käytetään vain tilin turvallisuuteen — ei näytetä koskaan piirissä.",
     "stayAnonymous": "Pysy anonyyminä piireissä",
     "stayAnonymousHint": "Muut käyttäjät näkevät \"Anonyymi\", eivät nimeäsi",
-    "settings": "Asetukset",
     "appearance": "Ulkoasu",
     "appearanceHint": "Vaihda vaalean ja tumman välillä",
     "privacyNote": "Nimesi ja yhteystietosi on salattu levossa eikä niitä koskaan näytetä muille jäsenille — piirit näkevät aina vain anonyymin nimikkeen, ellet ole valinnut näyttää nimeäsi.",
@@ -84,7 +90,6 @@
   },
   "status": {
     "ended": "Tämä istunto on päättynyt",
-    "anonymousByDefault": "Anonyymi oletuksena",
     "startsAt": "Alkaa {{time}} · anonyymi oletuksena"
   },
   "emptyState": {
@@ -108,16 +113,23 @@
     "showOfflineParticipants_other": "Näytä {{count}} poissaolevaa osallistujaa",
     "notCurrentlyOnline": "Ei tällä hetkellä paikalla",
     "userCount_one": "{{count}} käyttäjä",
-    "userCount_other": "{{count}} käyttäjää"
+    "userCount_other": "{{count}} käyttäjää",
+    "participantsButton_one": "Osallistujat, {{count}} paikalla",
+    "participantsButton_other": "Osallistujat, {{count}} paikalla",
+    "onlineSectionLabel": "Paikalla",
+    "offlineToggle_one": "Poissa ({{count}})",
+    "offlineToggle_other": "Poissa ({{count}})",
+    "participantsTitle": "Osallistujat",
+    "closeParticipants": "Sulje"
   },
   "composer": {
+    "memberJoined": "{{name}} liittyi piiriin",
     "newMessages_one": "{{count}} uusi viesti",
     "newMessages_other": "{{count}} uutta viestiä",
     "sendingIn": "Lähetetään {{count}} s kuluttua",
     "skippingIn": "Ohitetaan {{count}} s kuluttua",
     "keepTypingToPause": "jatka kirjoittamista keskeyttääksesi",
-    "placeholderYourTurn": "Jaa, kun on sinun vuorosi",
-    "placeholderWaiting": "Kirjoita viestisi — lähetetään, kun on sinun vuorosi",
+    "placeholder": "Kirjoita...",
     "send": "Lähetä",
     "sendOptions": "Lähetysvalinnat",
     "autoSendToggle": "Lähetä automaattisesti, kun aika loppuu",
@@ -146,7 +158,6 @@
     "agreementFailed": "Hyväksyntäsi tallentamisessa tapahtui virhe. Yritä uudelleen.",
     "messageHeld": "Viestisi pidätettiin tarkistusta varten, eikä sitä lähetetty piiriin.",
     "sendFailed": "Viestin lähettämisessä tapahtui virhe.",
-    "turnSkipped": "Ei vastausta — vuorosi ohitettiin.",
     "skipFailed": "Vuorosi ohittamisessa tapahtui virhe.",
     "recentSessionsLoadFailed": "Viimeisimpiä istuntoja ei voitu ladata",
     "moreRecentSessionsLoadFailed": "Lisää istuntoja ei voitu ladata",

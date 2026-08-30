@@ -22,9 +22,8 @@ export interface PublishDeps {
   publish(payload: unknown): void
 }
 
-// Called from internalController.ts's /internal/rooms/:sessionId/publish —
-// trpc-api's only path to fan a message out, now that it no longer talks
-// to NATS directly.
+// Called from rpcServer.ts's publishMessage RPC — trpc-api's only path
+// to fan a message out, now that it no longer talks to NATS directly.
 export function publishToRoom(deps: PublishDeps, payload: unknown): void {
   deps.publish(payload)
 }

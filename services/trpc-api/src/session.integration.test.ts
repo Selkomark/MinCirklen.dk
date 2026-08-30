@@ -1,6 +1,10 @@
+import * as http from 'node:http'
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { DEFAULT_LOCAL_DATABASE_URL, createDb, createPgPool, runMigrations } from '@mincirklen/shared'
 import { sql } from 'kysely'
+import { Code, ConnectError, type ConnectRouter } from '@connectrpc/connect'
+import { connectNodeAdapter } from '@connectrpc/connect-node'
+import { InternalService } from '@mincirklen/proto'
 import { createApp } from './app'
 import { linkIdentity } from './repositories/userIdentityRepository'
 import { upsertUserProfile } from './repositories/userProfileRepository'
@@ -18,7 +22,8 @@ const VAULT = {
 const INTERNAL_SERVICE_SECRET = 'session-integration-test-internal-secret'
 
 let fakeModerationService: ReturnType<typeof Bun.serve>
-let fakeWebsocketService: ReturnType<typeof Bun.serve>
+let fakeWebsocketService: http.Server
+let fakeWebsocketServicePort: number
 let app: ReturnType<typeof createApp>
 
 // Captured requests to the fake websocket-service's publish route — reset
@@ -117,97 +122,92 @@ beforeAll(async () => {
     },
   })
 
-  // Stands in for websocket-service's whole /internal/* surface —
-  // exercises sessionRouter.ts's real HTTP calls (websocketServiceAdapter.ts)
-  // rather than mocking them away, same rationale as fakeModerationService
-  // above. The turn/roster routes are a minimal in-memory simulation, not
-  // a reimplementation of the real Redis/Lua compare-and-swap logic —
-  // that's exhaustively covered in websocket-service's own suite
-  // (redisTurnStateAdapter.integration.test.ts,
-  // internalController.integration.test.ts). This only needs to behave
-  // correctly enough for trpc-api's own wiring to be exercised end to end.
-  fakeWebsocketService = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      const url = new URL(req.url)
+  // Stands in for websocket-service's whole InternalService RPC surface —
+  // exercises sessionRouter.ts's real Connect calls
+  // (websocketServiceAdapter.ts) rather than mocking them away, same
+  // rationale as fakeModerationService above. The turn/roster methods are
+  // a minimal in-memory simulation, not a reimplementation of the real
+  // Redis/Lua compare-and-swap logic — that's exhaustively covered in
+  // websocket-service's own suite (redisTurnStateAdapter.integration.test.ts,
+  // rpcServer.integration.test.ts). This only needs to behave correctly
+  // enough for trpc-api's own wiring to be exercised end to end.
+  const rpcHandler = connectNodeAdapter({
+    routes: (router: ConnectRouter) =>
+      router.service(InternalService, {
+        async publishMessage(req, context) {
+          publishedRequests.push({
+            sessionId: req.sessionId,
+            secretHeader: context.requestHeader.get('x-internal-secret'),
+            body: { id: req.messageId, sessionId: req.sessionId, userId: req.userId, body: req.body, type: req.type, createdAt: req.createdAt },
+          })
+          return {}
+        },
 
-      const publishMatch = url.pathname.match(/^\/internal\/rooms\/([^/]+)\/publish$/)
-      if (publishMatch) {
-        const body = await req.json()
-        publishedRequests.push({
-          sessionId: publishMatch[1] as string,
-          secretHeader: req.headers.get('x-internal-secret'),
-          body,
-        })
-        return new Response(null, { status: 204 })
-      }
+        async getTurnState(req) {
+          const state = await seedFakeTurnStateIfMissing(req.sessionId)
+          if (!state) throw new ConnectError('not found', Code.NotFound)
+          // This fake never simulates live presence (that's exhaustively
+          // covered in websocket-service's own suite — see this block's
+          // doc comment) — always empty, never omitted, so trpc-api's own
+          // wiring for the field is still exercised end to end.
+          return { currentTurnUserId: state.currentTurnUserId ?? '', roster: state.roster, onlineUserIds: [] }
+        },
 
-      const turnMatch = url.pathname.match(/^\/internal\/sessions\/([^/]+)\/turn$/)
-      if (turnMatch && req.method === 'GET') {
-        const sessionId = turnMatch[1] as string
-        const state = await seedFakeTurnStateIfMissing(sessionId)
-        if (!state) return new Response('not found', { status: 404 })
-        // This fake never simulates live presence (that's exhaustively
-        // covered in websocket-service's own suite — see this block's
-        // doc comment) — always empty, never omitted, so trpc-api's own
-        // wiring for the field is still exercised end to end.
-        return Response.json({ currentTurnUserId: state.currentTurnUserId, roster: state.roster, onlineUserIds: [] })
-      }
+        async joinRoster(req) {
+          joinNotifications.push({ sessionId: req.sessionId, userId: req.userId })
+          const state = await seedFakeTurnStateIfMissing(req.sessionId)
+          if (!state) throw new ConnectError('not found', Code.NotFound)
+          if (!state.roster.some((r) => r.userId === req.userId)) {
+            state.roster.push({ userId: req.userId, turnOrder: req.turnOrder })
+          }
+          return {}
+        },
 
-      const joinMatch = url.pathname.match(/^\/internal\/sessions\/([^/]+)\/roster\/join$/)
-      if (joinMatch && req.method === 'POST') {
-        const sessionId = joinMatch[1] as string
-        const { userId, turnOrder } = (await req.json()) as { userId: string; turnOrder: number }
-        joinNotifications.push({ sessionId, userId })
-        const state = await seedFakeTurnStateIfMissing(sessionId)
-        if (!state) return new Response('not found', { status: 404 })
-        if (!state.roster.some((r) => r.userId === userId)) {
-          state.roster.push({ userId, turnOrder })
-        }
-        return new Response(null, { status: 204 })
-      }
+        async notifyProfileUpdated() {
+          return {}
+        },
 
-      const claimMatch = url.pathname.match(/^\/internal\/sessions\/([^/]+)\/turn\/claim$/)
-      if (claimMatch && req.method === 'POST') {
-        const sessionId = claimMatch[1] as string
-        const { userId } = (await req.json()) as { userId: string }
-        const state = fakeTurnStates.get(sessionId)
-        if (!state) return new Response('not found', { status: 404 })
-        if (state.currentTurnUserId !== userId) return new Response('forbidden', { status: 403 })
-        if (state.turnClaimedAt !== null && Date.now() - state.turnClaimedAt < 15000) {
-          return new Response('conflict', { status: 409 })
-        }
-        state.turnClaimedAt = Date.now()
-        return new Response(null, { status: 204 })
-      }
+        async claimTurn(req) {
+          const state = fakeTurnStates.get(req.sessionId)
+          if (!state) throw new ConnectError('not found', Code.NotFound)
+          if (state.currentTurnUserId !== req.userId) throw new ConnectError('forbidden', Code.PermissionDenied)
+          if (state.turnClaimedAt !== null && Date.now() - state.turnClaimedAt < 15000) {
+            throw new ConnectError('conflict', Code.AlreadyExists)
+          }
+          state.turnClaimedAt = Date.now()
+          return {}
+        },
 
-      const releaseMatch = url.pathname.match(/^\/internal\/sessions\/([^/]+)\/turn\/release$/)
-      if (releaseMatch && req.method === 'POST') {
-        const state = fakeTurnStates.get(releaseMatch[1] as string)
-        if (state) state.turnClaimedAt = null
-        return new Response(null, { status: 204 })
-      }
+        async releaseTurnClaim(req) {
+          const state = fakeTurnStates.get(req.sessionId)
+          if (state) state.turnClaimedAt = null
+          return {}
+        },
 
-      const advanceMatch = url.pathname.match(/^\/internal\/sessions\/([^/]+)\/turn\/advance$/)
-      if (advanceMatch && req.method === 'POST') {
-        const state = fakeTurnStates.get(advanceMatch[1] as string)
-        if (!state || state.roster.length === 0) return Response.json({ currentTurnUserId: null })
-        const currentIndex = state.roster.findIndex((r) => r.userId === state.currentTurnUserId)
-        const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % state.roster.length
-        state.currentTurnUserId = state.roster[nextIndex]?.userId ?? null
-        state.turnClaimedAt = null
-        return Response.json({ currentTurnUserId: state.currentTurnUserId })
-      }
+        async advanceTurn(req) {
+          const state = fakeTurnStates.get(req.sessionId)
+          if (!state || state.roster.length === 0) return { nextTurnUserId: '' }
+          const currentIndex = state.roster.findIndex((r) => r.userId === state.currentTurnUserId)
+          const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % state.roster.length
+          state.currentTurnUserId = state.roster[nextIndex]?.userId ?? null
+          state.turnClaimedAt = null
+          return { nextTurnUserId: state.currentTurnUserId ?? '' }
+        },
+      }),
+  })
 
-      return new Response('not found', { status: 404 })
-    },
+  fakeWebsocketService = http.createServer(rpcHandler)
+  fakeWebsocketServicePort = await new Promise<number>((resolve) => {
+    fakeWebsocketService.listen(0, '127.0.0.1', () => {
+      resolve((fakeWebsocketService.address() as { port: number }).port)
+    })
   })
 
   app = createApp({
     db,
     authSecret: 'session-integration-test-secret',
     moderationServiceUrl: `http://localhost:${fakeModerationService.port}`,
-    websocketServiceUrl: `http://localhost:${fakeWebsocketService.port}`,
+    websocketServiceUrl: `http://127.0.0.1:${fakeWebsocketServicePort}`,
     internalServiceSecret: INTERNAL_SERVICE_SECRET,
     publicBaseUrl: 'https://dev-mincirklen.dk',
     vault: VAULT,
@@ -217,7 +217,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   fakeModerationService.stop()
-  fakeWebsocketService.stop()
+  await new Promise<void>((resolve, reject) => fakeWebsocketService.close((err) => (err ? reject(err) : resolve())))
   await db.destroy()
 })
 
@@ -250,6 +250,7 @@ async function createActor(): Promise<Actor> {
     userId,
     firstName: 'Test',
     lastName: 'Actor',
+    gender: 'other',
     country: 'US',
     mobileNumber: '+1 555 0100',
     stayAnonymous: true,
@@ -326,12 +327,16 @@ describe('session + message pipeline', () => {
 
     const stateRes = await query(alice, 'session.getState', { sessionId })
     const { result: state } = (await stateRes.json()) as {
-      result: { data: { currentTurnUserId: string; roster: { userId: string; turnOrder: number }[] } }
+      result: { data: { currentTurnUserId: string; roster: { userId: string; turnOrder: number; displayName: string | null }[] } }
     }
     expect(state.data.currentTurnUserId).toBe(alice.userId)
+    // Neither actor has a profile with stay_anonymous off in this test,
+    // so both roster entries stay anonymous (displayName: null) — see
+    // userProfileRepository.integration.test.ts for the "reveals a name"
+    // and "masks it again once re-anonymized" cases.
     expect(state.data.roster).toEqual([
-      { userId: alice.userId, turnOrder: 0 },
-      { userId: bob.userId, turnOrder: 1 },
+      { userId: alice.userId, turnOrder: 0, displayName: null },
+      { userId: bob.userId, turnOrder: 1, displayName: null },
     ])
 
     // Bob is not the current-turn holder — rejected.
@@ -343,11 +348,16 @@ describe('session + message pipeline', () => {
     const { result: sent } = (await aliceSends.json()) as { result: { data: { status: string } } }
     expect(sent.data.status).toBe('sent')
 
-    await waitForPublish(1)
-    expect(publishedRequests).toHaveLength(1)
-    expect(publishedRequests[0]?.sessionId).toBe(sessionId)
-    expect(publishedRequests[0]?.secretHeader).toBe(INTERNAL_SERVICE_SECRET)
-    expect(publishedRequests[0]?.body).toMatchObject({ sessionId, userId: alice.userId, body: 'hello room' })
+    // 3 publishes total: alice's and bob's join each fan out a "joined"
+    // system message (see migrations/0001_init.ts), plus
+    // alice's real send — fire-and-forget, so find the one that matters
+    // rather than assume a fixed index/order across them.
+    await waitForPublish(3)
+    expect(publishedRequests).toHaveLength(3)
+    const sendPublish = publishedRequests.find((r) => (r.body as { body?: string }).body === 'hello room')
+    expect(sendPublish?.sessionId).toBe(sessionId)
+    expect(sendPublish?.secretHeader).toBe(INTERNAL_SERVICE_SECRET)
+    expect(sendPublish?.body).toMatchObject({ sessionId, userId: alice.userId, body: 'hello room' })
 
     const afterState = await query(alice, 'session.getState', { sessionId })
     const { result: afterData } = (await afterState.json()) as {
@@ -356,8 +366,10 @@ describe('session + message pipeline', () => {
     expect(afterData.data.currentTurnUserId).toBe(bob.userId)
 
     const messagesRes = await query(alice, 'session.listMessages', { sessionId })
-    const { result: messages } = (await messagesRes.json()) as { result: { data: { messages: { body: string }[] } } }
-    expect(messages.data.messages.map((m) => m.body)).toEqual(['hello room'])
+    const { result: messages } = (await messagesRes.json()) as {
+      result: { data: { messages: { body: string; type: string }[] } }
+    }
+    expect(messages.data.messages.filter((m) => m.type === 'user').map((m) => m.body)).toEqual(['hello room'])
 
     // Alice's turn has passed — sending again is rejected.
     const aliceSendsAgain = await call(alice, 'session.sendMessage', { sessionId, body: 'again' })
@@ -387,11 +399,14 @@ describe('session + message pipeline', () => {
     const { result: state } = (await stateRes.json()) as { result: { data: { currentTurnUserId: string } } }
     expect(state.data.currentTurnUserId).toBe(bob.userId)
 
-    // No message published, none persisted — a skip is silent.
-    expect(publishedRequests).toHaveLength(0)
+    // No new publish from the skip itself, none persisted — a skip is
+    // silent. The 2 publishes already present are alice's and bob's join
+    // system messages (see migrations/0001_init.ts).
+    await waitForPublish(2)
+    expect(publishedRequests).toHaveLength(2)
     const messagesRes = await query(alice, 'session.listMessages', { sessionId })
-    const { result: messages } = (await messagesRes.json()) as { result: { data: { messages: unknown[] } } }
-    expect(messages.data.messages).toEqual([])
+    const { result: messages } = (await messagesRes.json()) as { result: { data: { messages: { type: string }[] } } }
+    expect(messages.data.messages.filter((m) => m.type === 'user')).toEqual([])
 
     // Alice's turn already passed — skipping again is rejected.
     const aliceSkipsAgain = await call(alice, 'session.skipTurn', { sessionId })
@@ -459,19 +474,25 @@ describe('session + message pipeline', () => {
     await call(bob, 'session.sendMessage', { sessionId, body: 'second' })
     await call(alice, 'session.sendMessage', { sessionId, body: 'third' })
 
-    const firstPageRes = await query(alice, 'session.listMessages', { sessionId, limit: 2 })
-    const { result: firstPage } = (await firstPageRes.json()) as {
-      result: { data: { messages: { body: string }[]; nextCursor: string | null } }
+    // Alice's and bob's joins each land a "joined" system message ahead of
+    // the real sends (migrations/0001_init.ts), so the exact
+    // page boundaries for a fixed limit shift — walk every page via cursor
+    // (same guarded-loop pattern as messageRepository.integration.test.ts's
+    // pagination test) instead of asserting fixed page contents, then check
+    // only the real messages came back complete and in order.
+    const collected: { body: string; type: string }[] = []
+    let cursor: string | null | undefined
+    for (let guard = 0; guard < 10; guard++) {
+      const pageRes = await query(alice, 'session.listMessages', cursor ? { sessionId, limit: 2, cursor } : { sessionId, limit: 2 })
+      const { result: page } = (await pageRes.json()) as {
+        result: { data: { messages: { body: string; type: string }[]; nextCursor: string | null } }
+      }
+      collected.unshift(...page.data.messages)
+      if (page.data.nextCursor === null) break
+      cursor = page.data.nextCursor
     }
-    expect(firstPage.data.messages.map((m) => m.body)).toEqual(['second', 'third'])
-    expect(firstPage.data.nextCursor).not.toBeNull()
 
-    const secondPageRes = await query(alice, 'session.listMessages', { sessionId, limit: 2, cursor: firstPage.data.nextCursor })
-    const { result: secondPage } = (await secondPageRes.json()) as {
-      result: { data: { messages: { body: string }[]; nextCursor: string | null } }
-    }
-    expect(secondPage.data.messages.map((m) => m.body)).toEqual(['first'])
-    expect(secondPage.data.nextCursor).toBeNull()
+    expect(collected.filter((m) => m.type === 'user').map((m) => m.body)).toEqual(['first', 'second', 'third'])
   })
 
   test('"flag": holds the message back but still advances the turn', async () => {
@@ -490,8 +511,8 @@ describe('session + message pipeline', () => {
     expect(result.data.status).toBe('held')
 
     const messagesRes = await query(alice, 'session.listMessages', { sessionId })
-    const { result: messages } = (await messagesRes.json()) as { result: { data: { messages: unknown[] } } }
-    expect(messages.data.messages).toHaveLength(0)
+    const { result: messages } = (await messagesRes.json()) as { result: { data: { messages: { type: string }[] } } }
+    expect(messages.data.messages.filter((m) => m.type === 'user')).toHaveLength(0)
 
     const stateRes = await query(alice, 'session.getState', { sessionId })
     const { result: state } = (await stateRes.json()) as { result: { data: { currentTurnUserId: string } } }
@@ -717,7 +738,7 @@ describe('session.visit / session.listRecentVisits', () => {
     return result.data.id
   }
 
-  test('visiting a session the actor never explicitly joined auto-joins them (DashboardPage.tsx\'s "observe any session" path)', async () => {
+  test('visiting a session the actor never explicitly joined auto-joins them (SessionPage.tsx\'s "observe any session" path)', async () => {
     const alice = await createActor()
     const bob = await createActor()
 

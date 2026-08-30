@@ -1,14 +1,17 @@
 {
   "toggleTheme": "Vaihda teema",
+  "language": "Kieli",
+  "toast": {
+    "dismiss": "Sulje"
+  },
   "nav": {
     "preferences": "Omat asetukset",
     "profile": "Profiili",
-    "settings": "Asetukset",
     "privacy": "Tietosuoja ja tiedot",
     "logOut": "Kirjaudu ulos"
   },
   "account": {
-    "title": "Tili"
+    "title": "Asetukset"
   },
   "actions": {
     "saveChanges": "Tallenna muutokset",

@@ -3,6 +3,7 @@ import { websocket } from 'hono/bun'
 import { connect } from 'nats'
 import { Redis } from 'ioredis'
 import { createApp } from './app'
+import { createRpcServer } from './rpcServer'
 
 // Never `public` — see packages/shared/src/db/pool.ts and docs/local_dev.md.
 // Not running its own migrations (trpc-api does), so `dbSchema` isn't
@@ -61,3 +62,14 @@ const app = createApp({ db, nats, redis, authSecret, allowedOrigins, internalSer
 const port = Number(process.env.PORT ?? 8080)
 Bun.serve({ port, fetch: app.fetch, websocket })
 console.log(`websocket-service listening on :${port}`)
+
+// Second, internal-only listener for trpc-api's Connect/RPC calls — a
+// single Bun.serve can't also own this port, and this surface is never
+// published to the host (see docker-compose.yml), same posture as
+// moderation-service.
+const rpcPort = Number(process.env.INTERNAL_RPC_PORT ?? 8081)
+await createRpcServer({ db, nats, redis, authSecret, allowedOrigins, internalServiceSecret, wireFormat: wsWireFormat }).listen({
+  host: '0.0.0.0',
+  port: rpcPort,
+})
+console.log(`websocket-service internal RPC listening on :${rpcPort}`)

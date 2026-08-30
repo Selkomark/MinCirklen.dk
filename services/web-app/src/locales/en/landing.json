@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "MinCirklen — Anonymous, moderated peer-support circles",
+    "description": "MinCirklen is an anonymous, AI-moderated peer-support platform. No profiles, no directory, no way to look anyone up — just small, moderated circles to be heard in."
+  },
   "header": {
     "about": "About",
     "safety": "Safety",

@@ -10,7 +10,7 @@ export interface StartPageProps {
 
 export function StartPage({ onChooseJoin, onChooseNew }: StartPageProps) {
   const { t } = useTranslation('start')
-  useDocumentTitle('Start a circle — MinCirklen')
+  useDocumentTitle(t('choose.documentTitle'))
 
   return (
     <div style={{ minHeight: '100vh', fontFamily: 'var(--font-family-base)' }}>

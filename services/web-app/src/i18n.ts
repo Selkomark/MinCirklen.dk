@@ -5,11 +5,11 @@ import resourcesToBackend from 'i18next-resources-to-backend'
 
 // Namespaces mirror the app's major surfaces so each stays a manageable
 // size and loads independently — a visitor on the landing page never
-// pulls in dashboard.json. `publicPages` is scaffolded here but only ever
+// pulls in session.json. `publicPages` is scaffolded here but only ever
 // populated for `en` — the long-form legal/policy prose is explicitly
 // excluded from this pass (mistranslating it carries real liability) and
 // stays English-only pending human/professional translation.
-export const NAMESPACES = ['common', 'landing', 'auth', 'start', 'dashboard', 'moderation', 'errors', 'publicPages'] as const
+export const NAMESPACES = ['common', 'landing', 'auth', 'start', 'session', 'moderation', 'errors', 'publicPages'] as const
 export type Namespace = (typeof NAMESPACES)[number]
 
 export const SUPPORTED_LNGS = ['en', 'sv', 'da', 'nb', 'fi'] as const

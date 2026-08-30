@@ -5,6 +5,7 @@ export const messageSchema = z.object({
   sessionId: z.string().uuid(),
   userId: z.string().uuid(),
   body: z.string().min(1),
+  type: z.enum(['user', 'system']),
   createdAt: z.coerce.date(),
 })
 

@@ -52,6 +52,7 @@
     "describePlaceholder": "Beskriv hva som skjedde...",
     "cancel": "Avbryt",
     "submitted": "Rapport om {{about}} sendt inn — en moderator vil gjennomgå den.",
+    "submitError": "Noe gikk galt under innsendingen av rapporten. Prøv igjen.",
     "submit": "Send inn rapport"
   },
   "newSessionModal": {
@@ -61,17 +62,22 @@
     "createTab": "Start en sirkel"
   },
   "accountModal": {
+    "back": "Tilbake",
     "profile": "Profil",
     "profileUnavailable": "Profilen din er ikke tilgjengelig akkurat nå.",
     "firstName": "Fornavn",
     "lastName": "Etternavn",
+    "gender": "Kjønn",
+    "genderPlaceholder": "Velg kjønnet ditt",
+    "gender_male": "Mann",
+    "gender_female": "Kvinne",
+    "gender_other": "Annet",
     "country": "Land",
     "countryPlaceholder": "Velg landet ditt",
     "mobileNumber": "Mobilnummer",
     "mobileHint": "Mobilnummeret brukes kun til kontosikkerhet — vises aldri i en sirkel.",
     "stayAnonymous": "Vær anonym i sirkler",
     "stayAnonymousHint": "Andre brukere ser \"Anonym\", ikke navnet ditt",
-    "settings": "Innstillinger",
     "appearance": "Utseende",
     "appearanceHint": "Bytt mellom lyst og mørkt",
     "privacyNote": "Navnet og kontaktopplysningene dine er kryptert i hvile og vises aldri til andre medlemmer — sirkler ser alltid bare en anonym etikett med mindre du har valgt å vise navnet ditt.",
@@ -84,7 +90,6 @@
   },
   "status": {
     "ended": "Denne økten er avsluttet",
-    "anonymousByDefault": "Anonymt som standard",
     "startsAt": "Starter {{time}} · anonymt som standard"
   },
   "emptyState": {
@@ -108,16 +113,23 @@
     "showOfflineParticipants_other": "Vis {{count}} frakoblede deltakere",
     "notCurrentlyOnline": "Ikke pålogget nå",
     "userCount_one": "{{count}} bruker",
-    "userCount_other": "{{count}} brukere"
+    "userCount_other": "{{count}} brukere",
+    "participantsButton_one": "Deltakere, {{count}} pålogget",
+    "participantsButton_other": "Deltakere, {{count}} pålogget",
+    "onlineSectionLabel": "Pålogget",
+    "offlineToggle_one": "Frakoblet ({{count}})",
+    "offlineToggle_other": "Frakoblet ({{count}})",
+    "participantsTitle": "Deltakere",
+    "closeParticipants": "Lukk"
   },
   "composer": {
+    "memberJoined": "{{name}} ble med i sirkelen",
     "newMessages_one": "{{count}} ny melding",
     "newMessages_other": "{{count}} nye meldinger",
     "sendingIn": "Sender om {{count}}s",
     "skippingIn": "Hopper over om {{count}}s",
     "keepTypingToPause": "fortsett å skrive for å sette på pause",
-    "placeholderYourTurn": "Del når det er din tur",
-    "placeholderWaiting": "Skriv meldingen din — sendes når det blir din tur",
+    "placeholder": "Skriv...",
     "send": "Send",
     "sendOptions": "Sendealternativer",
     "autoSendToggle": "Send automatisk når tiden går ut",
@@ -146,7 +158,6 @@
     "agreementFailed": "Noe gikk galt under registrering av godkjenningen din. Prøv igjen.",
     "messageHeld": "Meldingen din ble holdt tilbake for gjennomgang og ble ikke sendt til sirkelen.",
     "sendFailed": "Noe gikk galt under sending av meldingen.",
-    "turnSkipped": "Ingen respons — turen din ble hoppet over.",
     "skipFailed": "Noe gikk galt da turen din skulle hoppes over.",
     "recentSessionsLoadFailed": "Kunne ikke laste inn nylige økter",
     "moreRecentSessionsLoadFailed": "Kunne ikke laste inn flere økter",

@@ -27,20 +27,26 @@ describe('joinSession', () => {
 })
 
 describe('getSessionState', () => {
-  test('returns null without reading turn state when the session does not exist', async () => {
+  test('returns null without reading turn state or display names when the session does not exist', async () => {
     let turnStateCalled = false
+    let displayNamesCalled = false
     const result = await getSessionState({
       getSessionStatus: async () => null,
       getTurnState: async () => {
         turnStateCalled = true
         return { currentTurnUserId: null, roster: [], onlineUserIds: [] }
       },
+      findDisplayNames: async () => {
+        displayNamesCalled = true
+        return new Map()
+      },
     })
     expect(result).toBeNull()
     expect(turnStateCalled).toBe(false)
+    expect(displayNamesCalled).toBe(false)
   })
 
-  test('composes session status with turn/roster/presence state', async () => {
+  test('composes session status with turn/roster/presence state, defaulting to an anonymous (null) display name', async () => {
     const result = await getSessionState({
       getSessionStatus: async () => ({ id: 's1', status: 'active' as const }),
       getTurnState: async () => ({
@@ -48,14 +54,37 @@ describe('getSessionState', () => {
         roster: [{ userId: 'alice', turnOrder: 0 }],
         onlineUserIds: ['alice'],
       }),
+      findDisplayNames: async () => new Map(),
     })
     expect(result).toEqual({
       id: 's1',
       status: 'active',
       currentTurnUserId: 'alice',
-      roster: [{ userId: 'alice', turnOrder: 0 }],
+      roster: [{ userId: 'alice', turnOrder: 0, displayName: null }],
       onlineUserIds: ['alice'],
     })
+  })
+
+  test('fills in a display name for a roster member who has turned off stay_anonymous', async () => {
+    const result = await getSessionState({
+      getSessionStatus: async () => ({ id: 's1', status: 'active' as const }),
+      getTurnState: async () => ({
+        currentTurnUserId: 'alice',
+        roster: [
+          { userId: 'alice', turnOrder: 0 },
+          { userId: 'bob', turnOrder: 1 },
+        ],
+        onlineUserIds: ['alice', 'bob'],
+      }),
+      findDisplayNames: async (userIds) => {
+        expect(userIds).toEqual(['alice', 'bob'])
+        return new Map([['alice', 'Alice']])
+      },
+    })
+    expect(result?.roster).toEqual([
+      { userId: 'alice', turnOrder: 0, displayName: 'Alice' },
+      { userId: 'bob', turnOrder: 1, displayName: null },
+    ])
   })
 })
 

@@ -176,10 +176,13 @@ services:
       MODERATION_SVC_URL: http://moderation-service:8082
       # trpc-api never talks to NATS/Redis directly — those are internal to
       # websocket-service (its own cross-pod fanout and shared memory). This
-      # is the one HTTP surface trpc-api uses to hand it a message to relay
-      # (see websocketServiceAdapter.ts); INTERNAL_SERVICE_SECRET must match
-      # websocket-service's own value below.
-      WEBSOCKET_SERVICE_URL: http://websocket-service:8080
+      # is websocket-service's internal-only Connect/RPC listener (see
+      # rpcServer.ts and adapters/websocketServiceAdapter.ts), a distinct
+      # port from :8080's public /healthz + /ws — never published to the
+      # host, same "never public" posture as moderation-service.
+      # INTERNAL_SERVICE_SECRET must match websocket-service's own value
+      # below.
+      WEBSOCKET_SERVICE_URL: http://websocket-service:8081
       INTERNAL_SERVICE_SECRET: dev-only-not-for-production
       AUTH_SECRET: dev-only-not-for-production
       # Keys the OAuth subject hash (user_identities.provider_subject_hash)
@@ -197,6 +200,7 @@ services:
       - ./services/trpc-api/src:/app/services/trpc-api/src
       - ./packages/shared/src:/app/packages/shared/src
       - ./packages/shared/migrations:/app/packages/shared/migrations
+      - ./packages/proto/src:/app/packages/proto/src
     depends_on:
       postgres:
         condition: service_healthy
@@ -220,18 +224,26 @@ services:
       # touched by trpc-api directly.
       REDIS_URL: redis://redis:6379
       # Must match trpc-api's own INTERNAL_SERVICE_SECRET above — this is
-      # the shared secret trpc-api presents on /internal/* calls.
+      # the shared secret trpc-api presents on every internal RPC call
+      # (see rpcServer.ts).
       INTERNAL_SERVICE_SECRET: dev-only-not-for-production
       # Defaults to 'binary' if unset (see index.ts) — explicit 'json'
       # here keeps local dev's WS traffic readable in DevTools. Flip to
       # 'binary' locally to test that path before it ships; production
       # needs no config to get the binary default.
       WS_WIRE_FORMAT: json
+      # rpcServer.ts's Connect/RPC listener — a second, internal-only
+      # port alongside :8080's public /healthz + /ws (a single Bun.serve
+      # can't own both). Deliberately no `ports:` mapping below, same
+      # "never public" posture as moderation-service — trpc-api reaches
+      # it over the docker-compose network by service name alone.
+      INTERNAL_RPC_PORT: '8081'
     ports:
       - '8091:8080'
     volumes:
       - ./services/websocket-service/src:/app/services/websocket-service/src
       - ./packages/shared/src:/app/packages/shared/src
+      - ./packages/proto/src:/app/packages/proto/src
     depends_on:
       postgres:
         condition: service_healthy

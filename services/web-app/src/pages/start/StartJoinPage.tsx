@@ -29,7 +29,7 @@ import {
 export interface StartJoinPageProps {
   onBack: () => void
   onComplete: (sessionId: string) => void
-  // DashboardPage.tsx's "New session" opens this same flow in a Modal
+  // SessionPage.tsx's "New session" opens this same flow in a Modal
   // instead of navigating to the /start/join route — embedded skips the
   // full-page chrome (SiteHeader/SiteFooter, the centered/padded page
   // wrapper) and just renders the step content, since the Modal already
@@ -48,14 +48,14 @@ function CircleRowSkeleton() {
 
 export function StartJoinPage({ onBack, onComplete, embedded = false }: StartJoinPageProps) {
   const { t } = useTranslation('start')
-  useDocumentTitle('Join a circle — MinCirklen')
+  useDocumentTitle(t('joinPage.documentTitle'))
 
   const { topics } = useTopics()
   const { effectiveTimeZone } = usePreferences()
 
   // Single step: picking a circle joins it immediately. The former
   // second step's consent checkboxes (anonymity/guidelines/terms) moved
-  // to DashboardPage.tsx's CommunityGuidelinesModal — the one gate that
+  // to SessionPage.tsx's CommunityGuidelinesModal — the one gate that
   // covers every way of joining a circle (direct visit, this page, "New
   // session"), not a separate copy re-asked here. `joiningId` tracks
   // which row is mid-join, both for that row's own pending state and to
@@ -294,7 +294,13 @@ export function StartJoinPage({ onBack, onComplete, embedded = false }: StartJoi
                       </div>
                       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', gap: 10 }}>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                          <DatePicker label={t('joinPage.date')} value={draftDate} onChange={setDraftDate} style={{ width: 160, maxWidth: '100%' }} />
+                          <DatePicker
+                            label={t('joinPage.date')}
+                            openCalendarLabel={t('shared.openCalendar')}
+                            value={draftDate}
+                            onChange={setDraftDate}
+                            style={{ width: 160, maxWidth: '100%' }}
+                          />
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 3, width: 90 }}>
                           <Select

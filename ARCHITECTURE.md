@@ -10,6 +10,82 @@ Scope: `services/trpc-api`, `services/websocket-service`,
 `services/moderation-service`, and anything added under `packages/`. Not
 `services/web-app` (frontend has its own conventions).
 
+## System overview
+
+A high-level view of every service in the system and how they're wired
+together — for onboarding and as a map back to the sections below. Not
+scoped to backend-only like the rest of this document: the client is
+included because "how the system is wired" isn't answerable without it.
+Reflects what the code actually does today, not `docs/tech_spec.md`'s
+target cloud topology where the two differ (e.g. that document specs
+trpc-api → moderation-service as gRPC; the current implementation is
+plain HTTP/REST — `adapters/moderationServiceAdapter.ts`).
+
+```mermaid
+flowchart TB
+    Browser["Browser / web-app<br/>(services/web-app)"]
+
+    subgraph Edge["Edge"]
+        LB["Reverse proxy / Load Balancer<br/>(Caddy locally, GCP HTTPS LB in prod)<br/>TLS + host-based routing + WS upgrade"]
+    end
+
+    subgraph Public["Publicly routable services"]
+        TRPC["trpc-api (Hono/Bun)<br/>auth, session mgmt, message ingestion<br/>tRPC over HTTP"]
+        WS["websocket-service (Hono/Bun)<br/>:8080 — /healthz + /ws (live delivery only)"]
+    end
+
+    subgraph WSInternal["websocket-service internals"]
+        RPC[":8081 — Connect/Protobuf RPC listener<br/>(rpcServer.ts, internal-only)"]
+        NATS[("NATS<br/>cross-pod chat + presence fanout")]
+        Redis[("Redis<br/>live turn/roster/presence state")]
+    end
+
+    subgraph Private["Internal-only (never public)"]
+        Mod["moderation-service (Hono/Bun)<br/>per-message pass/flag/crisis classification"]
+    end
+
+    subgraph Data["Shared data layer"]
+        PG[("Postgres<br/>via Kysely — chat history, session/user data")]
+        KMS["Vault Transit (local) / Cloud KMS (prod)<br/>encrypts user_profiles PII"]
+    end
+
+    Browser -- "HTTPS + WSS" --> LB
+    LB -- "static assets" --> Browser
+    LB -- "HTTPS (trpc.*)" --> TRPC
+    LB -- "HTTPS + WS upgrade (socket.*)" --> WS
+
+    TRPC -- "HTTP/REST — classify message" --> Mod
+    TRPC -- "Connect/Protobuf RPC<br/>(publish, turn claim/release/advance,<br/>roster join, profile-updated)" --> RPC
+    RPC --- WS
+    RPC --> NATS
+    RPC --> Redis
+    WS --> NATS
+    WS --> Redis
+
+    TRPC -- "Kysely / SQL" --> PG
+    WS -- "Kysely / SQL" --> PG
+    TRPC -- "encrypt/decrypt PII" --> KMS
+```
+
+- **Client → Edge**: one persistent WebSocket connection per signed-in
+  session (not opened/closed per circle) plus REST/RPC calls for
+  everything else — see `docs/tech_spec.md` §3.
+- **trpc-api → moderation-service**: every inbound message is classified
+  before persistence or delivery — see
+  `services/trpc-api/src/services/messageService.ts`.
+  `moderation-service` has no public ingress, matching its own
+  `docker-compose.yml` entry (no host `ports:` mapping).
+- **trpc-api → websocket-service**: the internal RPC surface this
+  document's "Internal service-to-service calls" section below covers —
+  a second, internal-only port (`:8081`), never the same port as the
+  public `/healthz` + `/ws` listener (`:8080`).
+- **NATS / Redis**: both internal to websocket-service only — nothing
+  else in the system ever connects to them directly. See
+  `.agents/skills/nats-vs-redis/SKILL.md` for what each is for.
+- **Postgres**: the only piece of durable storage, reached independently
+  by trpc-api and websocket-service (never by the browser directly, and
+  never by moderation-service).
+
 ## Layering: Clean Architecture, unidirectional
 
 ```
@@ -95,6 +171,34 @@ full coverage on new code is still a review-time check.
   DO NOTHING`, or truncate-then-seed. A test suite that only passes once
   per fresh database is a bug in the test, not an acceptable integration
   test.
+
+## Internal service-to-service calls: Connect (Protobuf), not REST
+
+trpc-api's calls into websocket-service (`services/trpc-api/src/adapters/websocketServiceAdapter.ts`
+→ `services/websocket-service/src/rpcServer.ts`) use
+[Connect](https://connectrpc.com/) (`@connectrpc/connect`), schema-defined
+in `packages/proto` and code-generated via `buf`/`protoc-gen-es`
+(`bun run generate` in that package; output is committed, not generated
+at container start — same spirit as this repo's hand-committed Kysely
+migrations). Any new internal, service-to-service call follows this
+pattern, not a hand-rolled `fetch` + JSON REST route.
+
+Real gRPC-over-HTTP/2 (`@grpc/grpc-js`) was deliberately not used: Bun's
+`node:http2` server support (added in 1.2) has an open correctness bug
+(oven-sh/bun#21759) with malformed trailers, and every internal call
+today is unary anyway. Connect's own protocol (Protobuf/JSON over plain
+HTTP/1.1) gets the same typed-contract/codegen/binary-wire-format
+benefits without depending on that, while staying upgradable to real
+gRPC later with no handler changes if that's ever needed (streaming, a
+strict HTTP/2-only proxy in front).
+
+Each such internal RPC surface runs on its own port, **never published to
+the host** (`docker-compose.yml` — same posture as `moderation-service`,
+which is never public either), separate from whatever public port that
+service's own `Bun.serve`/Hono app owns — a single `Bun.serve` can't own
+two ports, so a second RPC listener (Fastify + `@connectrpc/connect-fastify`
+on the server side, since Fastify's Bun compatibility for this is
+verified — see `rpcServer.ts`) is how a service exposes both.
 
 ## DRY / KISS / Functional
 

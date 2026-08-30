@@ -9,7 +9,8 @@
     "startsIn": "Starter om {{duration}}",
     "live": "Live",
     "startingSoon": "Starter snart",
-    "open": "Åpen"
+    "open": "Åpen",
+    "openCalendar": "Åpne kalender"
   },
   "sizes": {
     "upTo": "Opptil {{count}}"
@@ -24,6 +25,7 @@
     "previousSessionsLoadFailed": "Kunne ikke laste inn tidligere sirkler"
   },
   "choose": {
+    "documentTitle": "Start en sirkel — MinCirklen",
     "title": "Ny økt",
     "subtitle": "Hvordan vil du begynne",
     "joinTitle": "Bli med i en eksisterende sirkel",
@@ -32,6 +34,7 @@
     "newSubtitle": "Angi emne, tid og lengde"
   },
   "joinPage": {
+    "documentTitle": "Bli med i en sirkel — MinCirklen",
     "title": "Bli med i en sirkel",
     "subtitle": "Velg en sirkel som passer timeplanen din",
     "searchPlaceholder": "Søk sirkler etter navn",
@@ -53,6 +56,7 @@
     "back": "Tilbake"
   },
   "newPage": {
+    "documentTitle": "Start en ny sirkel — MinCirklen",
     "title": "Start en ny sirkel",
     "subtitle": "Angi emne, tid og hvor mange som kan bli med",
     "circleName": "Sirkelens navn",

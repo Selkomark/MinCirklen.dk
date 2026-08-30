@@ -1,14 +1,17 @@
 {
   "toggleTheme": "Växla tema",
+  "language": "Språk",
+  "toast": {
+    "dismiss": "Stäng"
+  },
   "nav": {
     "preferences": "Preferenser",
     "profile": "Profil",
-    "settings": "Inställningar",
     "privacy": "Integritet och data",
     "logOut": "Logga ut"
   },
   "account": {
-    "title": "Konto"
+    "title": "Inställningar"
   },
   "actions": {
     "saveChanges": "Spara ändringar",

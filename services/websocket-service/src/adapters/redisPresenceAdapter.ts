@@ -46,7 +46,7 @@ export async function markOffline(redis: Redis, sessionId: string, userId: strin
 // Anonymized userIds only, in no particular order — callers that need a
 // display label (e.g. "Member 3") already have the roster to look one up
 // from, same as every other place in this codebase that turns a userId
-// into a label (see web-app's DashboardPage.tsx memberFor).
+// into a label (see web-app's SessionPage.tsx memberFor).
 export async function getOnlineUserIds(redis: Redis, sessionId: string, sinceMs: number): Promise<string[]> {
   return redis.zrangebyscore(onlineKey(sessionId), sinceMs, '+inf')
 }

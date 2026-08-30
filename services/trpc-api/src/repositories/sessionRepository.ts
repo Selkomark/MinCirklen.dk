@@ -34,11 +34,21 @@ export interface RosterEntry {
   turnOrder: number
 }
 
+// The roster shape actually returned by getState — RosterEntry plus a
+// display name resolved fresh from the current profile state (see
+// userProfileRepository.ts's findDisplayNames and
+// sessionService.ts's getSessionState). null means "show as anonymous"
+// (Member N) — either the member never turned off stay_anonymous, or
+// they don't have a completed profile at all.
+export interface RosterMember extends RosterEntry {
+  displayName: string | null
+}
+
 export interface SessionState {
   id: string
   status: 'forming' | 'active' | 'completed' | 'cancelled'
   currentTurnUserId: string | null
-  roster: RosterEntry[]
+  roster: RosterMember[]
   // Anonymized userIds currently holding a live WebSocket subscription
   // to this session — see websocket-service's redisPresenceAdapter.ts.
   // Distinct from `roster` (who has ever joined, durable): this is who's
@@ -57,8 +67,8 @@ export interface CreateSessionParams {
 
 // `params` is optional so the pre-existing ad-hoc turn-based flow (every
 // call site before the scheduled /start/new flow existed) keeps working
-// unchanged — see migrations/0007_circle_scheduling.ts and
-// migrations/0008_circle_name.ts.
+// unchanged — see migrations/0001_init.ts and
+// migrations/0001_init.ts.
 export async function createSession(db: Kysely<Database>, params?: CreateSessionParams): Promise<{ id: string }> {
   const row = params
     ? await db
@@ -416,7 +426,7 @@ export async function joinSession(db: Kysely<Database>, sessionId: string, userI
 
 // Public-safe session info — no roster/user IDs, unlike SessionState —
 // for anyone verified to look up, regardless of membership. Backs
-// DashboardPage.tsx's existence check (via session.visit) and header.
+// SessionPage.tsx's existence check (via session.visit) and header.
 // Unlike OpenSession, `topic` is nullable: this looks up *any* session by
 // id, including the ad-hoc turn-based flow's topicless ones, not just
 // scheduled circles.
@@ -569,7 +579,7 @@ export async function listRecentSessionVisits(
   }
 }
 
-// Every document/acknowledgment DashboardPage.tsx's CommunityGuidelinesModal
+// Every document/acknowledgment SessionPage.tsx's CommunityGuidelinesModal
 // covers (community guidelines + privacy policy together, an anonymity
 // acknowledgment, and terms of service + circle liability) — recorded as
 // separate keys, not one combined flag, so each is individually
@@ -667,4 +677,24 @@ export async function recordGuidelinesAgreement(db: Kysely<Database>, sessionId:
   for (const key of CIRCLE_GUIDELINE_AGREEMENT_KEYS) entries[key] = now
 
   await mergeAgreements(db, sessionId, userId, entries)
+}
+
+// Scoped to 'active' only — authRouter.ts's completeProfile calls this to
+// fan a live display-name update out to every session the saving user
+// currently belongs to (see websocketServiceAdapter.ts's
+// notifyProfileUpdated). A 'forming'/'completed'/'cancelled' session has
+// no live chat view to update, so there's no point paying for the
+// websocket-service round trip for those — publishing to a room with no
+// connected listeners is a harmless no-op regardless, but this avoids
+// fanning out to a user's entire multi-year session history on every
+// profile save.
+export async function listActiveSessionIdsForUser(db: Kysely<Database>, userId: string): Promise<string[]> {
+  const rows = await db
+    .selectFrom('session_users')
+    .innerJoin('sessions', 'sessions.id', 'session_users.session_id')
+    .select('session_users.session_id')
+    .where('session_users.user_id', '=', userId)
+    .where('sessions.status', '=', 'active')
+    .execute()
+  return rows.map((r) => r.session_id)
 }

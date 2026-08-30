@@ -9,7 +9,8 @@
     "startsIn": "Starter om {{duration}}",
     "live": "Live",
     "startingSoon": "Starter snart",
-    "open": "Åben"
+    "open": "Åben",
+    "openCalendar": "Åbn kalender"
   },
   "sizes": {
     "upTo": "Op til {{count}}"
@@ -24,6 +25,7 @@
     "previousSessionsLoadFailed": "Kunne ikke indlæse tidligere cirkler"
   },
   "choose": {
+    "documentTitle": "Start en cirkel — MinCirklen",
     "title": "Ny session",
     "subtitle": "Hvordan vil du gerne begynde",
     "joinTitle": "Bliv medlem af en eksisterende cirkel",
@@ -32,6 +34,7 @@
     "newSubtitle": "Angiv emne, tid og længde"
   },
   "joinPage": {
+    "documentTitle": "Bliv medlem af en cirkel — MinCirklen",
     "title": "Bliv medlem af en cirkel",
     "subtitle": "Vælg en cirkel, der passer til din tidsplan",
     "searchPlaceholder": "Søg cirkler efter navn",
@@ -53,6 +56,7 @@
     "back": "Tilbage"
   },
   "newPage": {
+    "documentTitle": "Start en ny cirkel — MinCirklen",
     "title": "Start en ny cirkel",
     "subtitle": "Angiv emne, tid og hvor mange der kan deltage",
     "circleName": "Cirklens navn",

@@ -4,7 +4,7 @@ import type { SessionFrame } from './sessionSocketTypes'
 
 // One persistent connection for every protected page a verified user
 // visits (mounted once in App.tsx's Shell, gated on authStatus.kind ===
-// 'verified') — replaces the old one-WebSocket-per-dashboard-page model.
+// 'verified') — replaces the old one-WebSocket-per-session-page model.
 // Pages declare what they currently care about via subscribeSession /
 // subscribeLiveCount; this provider owns turning that into the
 // server's subscribe/unsubscribe protocol (see websocket-service's

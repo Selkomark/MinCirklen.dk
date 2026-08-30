@@ -38,6 +38,33 @@ describe('insertMessage / listMessages', () => {
     const page = await listMessages(db, { sessionId, limit: 10 })
     expect(page.messages.map((m) => m.body)).toEqual(['first', 'second'])
   })
+
+  test('defaults to type "user" when omitted', async () => {
+    const { sessionId, userIds } = await seedSessionWithUsers(1)
+
+    const message = await insertMessage(db, { sessionId, userId: userIds[0] as string, body: 'hi' })
+    expect(message.type).toBe('user')
+
+    const page = await listMessages(db, { sessionId, limit: 10 })
+    expect(page.messages[0]?.type).toBe('user')
+  })
+
+  test('persists a "system" row when type is passed explicitly, interleaved by timestamp', async () => {
+    const { sessionId, userIds } = await seedSessionWithUsers(1)
+
+    await insertMessage(db, { sessionId, userId: userIds[0] as string, body: 'first' })
+    const joinMessage = await insertMessage(db, { sessionId, userId: userIds[0] as string, body: 'joined', type: 'system' })
+    await insertMessage(db, { sessionId, userId: userIds[0] as string, body: 'second' })
+
+    expect(joinMessage.type).toBe('system')
+
+    const page = await listMessages(db, { sessionId, limit: 10 })
+    expect(page.messages.map((m) => ({ body: m.body, type: m.type }))).toEqual([
+      { body: 'first', type: 'user' },
+      { body: 'joined', type: 'system' },
+      { body: 'second', type: 'user' },
+    ])
+  })
 })
 
 describe('recordPassedMessage', () => {

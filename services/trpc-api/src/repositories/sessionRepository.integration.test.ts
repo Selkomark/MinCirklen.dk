@@ -326,7 +326,7 @@ describe('listRecentSessionVisits', () => {
 // Turn claiming/advancing moved to websocket-service (Redis is now the
 // live authority) — see
 // services/websocket-service/src/adapters/redisTurnStateAdapter.integration.test.ts
-// and services/websocket-service/src/controllers/internalController.integration.test.ts
+// and services/websocket-service/src/rpcServer.integration.test.ts
 // for that coverage. Nothing in this repository claims/advances turns
 // any more.
 

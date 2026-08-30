@@ -1,14 +1,17 @@
 {
   "toggleTheme": "Toggle theme",
+  "language": "Language",
+  "toast": {
+    "dismiss": "Dismiss"
+  },
   "nav": {
     "preferences": "Preferences",
     "profile": "Profile",
-    "settings": "Settings",
     "privacy": "Privacy & data",
     "logOut": "Log out"
   },
   "account": {
-    "title": "Account"
+    "title": "Settings"
   },
   "actions": {
     "saveChanges": "Save changes",

@@ -10,6 +10,7 @@ import { publicPagePath } from '../publicPages/pages'
 import { SiteHeader } from '../SiteHeader'
 import { SiteFooter } from '../SiteFooter'
 import { COUNTRIES } from '../countries'
+import { GENDERS } from '../genders'
 import { useDocumentTitle } from '../useDocumentTitle'
 
 export interface RegisterPageProps {
@@ -18,10 +19,11 @@ export interface RegisterPageProps {
 
 export function RegisterPage({ onComplete }: RegisterPageProps) {
   const { t } = useTranslation('auth')
-  useDocumentTitle('Create your account — MinCirklen')
+  useDocumentTitle(t('register.documentTitle'))
 
   const [firstName, setFirstName] = useState('')
   const [lastName, setLastName] = useState('')
+  const [gender, setGender] = useState<Key | null>(null)
   const [country, setCountry] = useState<Key | null>(null)
   const [mobile, setMobile] = useState('')
   const [stayAnonymous, setStayAnonymous] = useState(true)
@@ -30,7 +32,12 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
   const [submitError, setSubmitError] = useState<string | null>(null)
 
   const canSubmit =
-    firstName.trim() !== '' && lastName.trim() !== '' && country != null && mobile.trim() !== '' && termsChecked
+    firstName.trim() !== '' &&
+    lastName.trim() !== '' &&
+    gender != null &&
+    country != null &&
+    mobile.trim() !== '' &&
+    termsChecked
 
   async function handleSubmit() {
     setSubmitError(null)
@@ -42,6 +49,7 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
         body: JSON.stringify({
           firstName: firstName.trim(),
           lastName: lastName.trim(),
+          gender: String(gender),
           country: String(country),
           mobileNumber: mobile.trim(),
           stayAnonymous,
@@ -110,6 +118,14 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
                 />
               </div>
             </div>
+
+            <Select label={t('register.gender')} placeholder={t('register.genderPlaceholder')} selectedKey={gender} onSelectionChange={setGender}>
+              {GENDERS.map((g) => (
+                <SelectItem key={g} id={g}>
+                  {t(`register.gender_${g}`)}
+                </SelectItem>
+              ))}
+            </Select>
 
             <Select
               label={t('register.country')}

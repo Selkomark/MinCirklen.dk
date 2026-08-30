@@ -1,4 +1,8 @@
 {
+  "meta": {
+    "title": "MinCirklen — Anonyme, modererte sirkler for likepersonstøtte",
+    "description": "MinCirklen er en anonym, AI-modererende plattform for likepersonstøtte. Ingen profiler, ingen katalog, ingen måte å slå opp noen på — bare små, modererte sirkler å bli hørt i."
+  },
   "header": {
     "about": "Om",
     "safety": "Sikkerhet",

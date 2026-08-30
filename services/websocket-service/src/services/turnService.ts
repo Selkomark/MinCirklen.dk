@@ -1,7 +1,7 @@
 import type { ClaimTurnResult, TurnState } from '../adapters/redisTurnStateAdapter'
 
 // Local to this service — never crosses the process boundary as an
-// object, only as an HTTP status code (see controllers/internalController.ts).
+// object, only as a Connect error code (see rpcServer.ts's toConnectError).
 // trpc-api's own sessionRepository.ts keeps its own identically-named
 // classes for exactly the same errors on its side of that boundary; they
 // don't need to be the same class, just the same meaning.

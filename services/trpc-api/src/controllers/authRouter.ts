@@ -2,11 +2,39 @@ import { createSessionToken, createUserProfileInputSchema } from '@mincirklen/sh
 import { insertUser } from '../repositories/userRepository'
 import { hasLinkedIdentityForUser } from '../repositories/userIdentityRepository'
 import { findUserProfileByUserId, upsertUserProfile, userProfileExists } from '../repositories/userProfileRepository'
+import { listActiveSessionIdsForUser } from '../repositories/sessionRepository'
 import { KmsError } from '../adapters/kmsAdapter'
+import { notifyProfileUpdated } from '../adapters/websocketServiceAdapter'
 import { createAnonymousSession } from '../services/authService'
 import { completeUserProfile } from '../services/userProfileService'
 import { buildLogoutCookie, buildSessionCookie } from '../context'
+import type { AppEnv } from '../context'
 import { googleLinkedProcedure, protectedProcedure, publicProcedure, router } from './trpc'
+
+// Fans a profile save out live to every active session this user
+// currently belongs to, so other connected viewers' roster entries
+// (SessionPage.tsx's memberFor) update immediately instead of waiting
+// on their next ~20s getState poll — see websocket-service's
+// createProfileUpdatedHandler. Fire-and-forget per session, same
+// rationale as sessionRouter.ts's notifyJoinedFireAndForget: Postgres is
+// already the source of truth for the new profile by this point, so a
+// missed live relay only means a slightly later update on the next poll,
+// never a correctness gap.
+function notifyProfileUpdatedFireAndForget(env: AppEnv, userId: string, displayName: string | null): void {
+  void listActiveSessionIdsForUser(env.db, userId)
+    .then((sessionIds) =>
+      Promise.all(
+        sessionIds.map((sessionId) =>
+          notifyProfileUpdated(env.websocketServiceUrl, env.internalServiceSecret, sessionId, userId, displayName).catch((err) => {
+            console.error('[PROFILE] failed to notify websocket-service of a profile update', sessionId, err)
+          }),
+        ),
+      ),
+    )
+    .catch((err) => {
+      console.error('[PROFILE] failed to look up active sessions to notify of a profile update', err)
+    })
+}
 
 export const authRouter = router({
   createAnonymousSession: publicProcedure.mutation(async ({ ctx }) => {
@@ -71,6 +99,14 @@ export const authRouter = router({
       },
       input,
     )
+
+    // Read off the validated input, not `profile` — completeUserProfile's
+    // return type is narrowed to { id }, and the upsert persists exactly
+    // what was submitted anyway. Only ever a name reveal/mask, never
+    // anything else this endpoint can change (country/timezone/etc aren't
+    // shown per-member anywhere) — mirrors findDisplayNames' identical
+    // stayAnonymous-gated logic, so the live push and the next poll agree.
+    notifyProfileUpdatedFireAndForget(ctx.appEnv, ctx.userId, input.stayAnonymous ? null : input.firstName)
 
     return profile
   }),

@@ -1,4 +1,4 @@
-// Shared by SiteHeader.tsx's LogoutButton and DashboardPage.tsx's account
+// Shared by SiteHeader.tsx's LogoutButton and SessionPage.tsx's account
 // menu — both trigger the exact same backend call and recovery
 // navigation, so the request itself lives in one place. Each call site
 // still owns its own pending/error UI, per the async-action-buttons

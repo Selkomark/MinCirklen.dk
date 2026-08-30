@@ -9,7 +9,8 @@
     "startsIn": "Börjar om {{duration}}",
     "live": "Live",
     "startingSoon": "Börjar snart",
-    "open": "Öppen"
+    "open": "Öppen",
+    "openCalendar": "Öppna kalender"
   },
   "sizes": {
     "upTo": "Upp till {{count}}"
@@ -24,6 +25,7 @@
     "previousSessionsLoadFailed": "Kunde inte läsa in tidigare cirklar"
   },
   "choose": {
+    "documentTitle": "Starta en cirkel — MinCirklen",
     "title": "Ny session",
     "subtitle": "Hur vill du börja",
     "joinTitle": "Gå med i en befintlig cirkel",
@@ -32,6 +34,7 @@
     "newSubtitle": "Ange ämne, tid och längd"
   },
   "joinPage": {
+    "documentTitle": "Gå med i en cirkel — MinCirklen",
     "title": "Gå med i en cirkel",
     "subtitle": "Välj en cirkel som passar ditt schema",
     "searchPlaceholder": "Sök cirklar efter namn",
@@ -53,6 +56,7 @@
     "back": "Tillbaka"
   },
   "newPage": {
+    "documentTitle": "Starta en ny cirkel — MinCirklen",
     "title": "Starta en ny cirkel",
     "subtitle": "Ange ämne, tid och hur många som kan gå med",
     "circleName": "Cirkelns namn",

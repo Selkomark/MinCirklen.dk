@@ -22,10 +22,10 @@ export interface AppEnv {
   // JS-initiated handshake in modern browsers, but that shouldn't be the
   // only guarantee. Empty list means "no restriction" (local dev default).
   allowedOrigins: string[]
-  // Shared secret trpc-api presents on every /internal/* call (see
-  // controllers/internalController.ts) — this service is publicly
-  // routable (unlike moderation-service), so that surface needs its own
-  // auth rather than relying on network isolation.
+  // Shared secret trpc-api presents on every internal RPC call (see
+  // rpcServer.ts) — this service is publicly routable (unlike
+  // moderation-service), so that surface needs its own auth rather than
+  // relying on network isolation.
   internalServiceSecret: string
   // Negotiated per-connection via wsController.ts's `hello` frame — see
   // services/wireFormat.ts. One env-var-controlled setting for the whole

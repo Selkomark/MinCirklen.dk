@@ -33,7 +33,7 @@ function upsertLink(rel: string, href: string) {
 
 // Sets title + description + canonical + Open Graph + Twitter Card tags for a public
 // page. Meant for pages search engines and AI crawlers should actually index — app-flow
-// pages (login, dashboard, etc.) just use useDocumentTitle and stay out of the sitemap.
+// pages (login, session, etc.) just use useDocumentTitle and stay out of the sitemap.
 export function usePageMeta({ title, description, path, image, type = 'website' }: PageMetaOptions) {
   useEffect(() => {
     document.title = title

@@ -52,6 +52,7 @@
     "describePlaceholder": "Beskriv vad som hände...",
     "cancel": "Avbryt",
     "submitted": "Rapport om {{about}} skickad — en moderator kommer att granska den.",
+    "submitError": "Något gick fel när rapporten skulle skickas. Försök igen.",
     "submit": "Skicka rapport"
   },
   "newSessionModal": {
@@ -61,17 +62,22 @@
     "createTab": "Starta en cirkel"
   },
   "accountModal": {
+    "back": "Tillbaka",
     "profile": "Profil",
     "profileUnavailable": "Din profil är inte tillgänglig just nu.",
     "firstName": "Förnamn",
     "lastName": "Efternamn",
+    "gender": "Kön",
+    "genderPlaceholder": "Välj ditt kön",
+    "gender_male": "Man",
+    "gender_female": "Kvinna",
+    "gender_other": "Annat",
     "country": "Land",
     "countryPlaceholder": "Välj ditt land",
     "mobileNumber": "Mobilnummer",
     "mobileHint": "Mobilnumret används endast för kontosäkerhet — visas aldrig i en cirkel.",
     "stayAnonymous": "Var anonym i cirklar",
     "stayAnonymousHint": "Andra användare ser \"Anonym\", inte ditt namn",
-    "settings": "Inställningar",
     "appearance": "Utseende",
     "appearanceHint": "Växla mellan ljust och mörkt läge",
     "privacyNote": "Ditt namn och dina kontaktuppgifter är krypterade i vila och visas aldrig för andra medlemmar — cirklar ser alltid bara en anonym etikett om du inte har valt att visa ditt namn.",
@@ -84,7 +90,6 @@
   },
   "status": {
     "ended": "Den här sessionen har avslutats",
-    "anonymousByDefault": "Anonymt som standard",
     "startsAt": "Börjar {{time}} · anonymt som standard"
   },
   "emptyState": {
@@ -108,16 +113,23 @@
     "showOfflineParticipants_other": "Visa {{count}} offline-deltagare",
     "notCurrentlyOnline": "Inte online just nu",
     "userCount_one": "{{count}} användare",
-    "userCount_other": "{{count}} användare"
+    "userCount_other": "{{count}} användare",
+    "participantsButton_one": "Deltagare, {{count}} online",
+    "participantsButton_other": "Deltagare, {{count}} online",
+    "onlineSectionLabel": "Online",
+    "offlineToggle_one": "Offline ({{count}})",
+    "offlineToggle_other": "Offline ({{count}})",
+    "participantsTitle": "Deltagare",
+    "closeParticipants": "Stäng"
   },
   "composer": {
+    "memberJoined": "{{name}} gick med i cirkeln",
     "newMessages_one": "{{count}} nytt meddelande",
     "newMessages_other": "{{count}} nya meddelanden",
     "sendingIn": "Skickar om {{count}}s",
     "skippingIn": "Hoppar över om {{count}}s",
     "keepTypingToPause": "fortsätt skriva för att pausa",
-    "placeholderYourTurn": "Dela när det är din tur",
-    "placeholderWaiting": "Skriv ditt meddelande — skickas när det är din tur",
+    "placeholder": "Skriv...",
     "send": "Skicka",
     "sendOptions": "Skickalternativ",
     "autoSendToggle": "Skicka automatiskt när tiden tar slut",
@@ -146,7 +158,6 @@
     "agreementFailed": "Något gick fel när ditt godkännande skulle registreras. Försök igen.",
     "messageHeld": "Ditt meddelande hölls kvar för granskning och skickades inte till cirkeln.",
     "sendFailed": "Något gick fel när meddelandet skulle skickas.",
-    "turnSkipped": "Inget svar — din tur hoppades över.",
     "skipFailed": "Något gick fel när din tur skulle hoppas över.",
     "recentSessionsLoadFailed": "Kunde inte läsa in senaste sessionerna",
     "moreRecentSessionsLoadFailed": "Kunde inte läsa in fler sessioner",

@@ -52,6 +52,7 @@
     "describePlaceholder": "Beskriv, hvad der skete...",
     "cancel": "Annuller",
     "submitted": "Rapport om {{about}} indsendt — en moderator gennemgår den.",
+    "submitError": "Der gik noget galt under indsendelsen af din rapport. Prøv igen.",
     "submit": "Indsend rapport"
   },
   "newSessionModal": {
@@ -61,17 +62,22 @@
     "createTab": "Start en cirkel"
   },
   "accountModal": {
+    "back": "Tilbage",
     "profile": "Profil",
     "profileUnavailable": "Din profil er ikke tilgængelig lige nu.",
     "firstName": "Fornavn",
     "lastName": "Efternavn",
+    "gender": "Køn",
+    "genderPlaceholder": "Vælg dit køn",
+    "gender_male": "Mand",
+    "gender_female": "Kvinde",
+    "gender_other": "Andet",
     "country": "Land",
     "countryPlaceholder": "Vælg dit land",
     "mobileNumber": "Mobilnummer",
     "mobileHint": "Mobilnummeret bruges kun til kontosikkerhed — vises aldrig i en cirkel.",
     "stayAnonymous": "Forbliv anonym i cirkler",
     "stayAnonymousHint": "Andre brugere ser \"Anonym\", ikke dit navn",
-    "settings": "Indstillinger",
     "appearance": "Udseende",
     "appearanceHint": "Skift mellem lyst og mørkt",
     "privacyNote": "Dit navn og dine kontaktoplysninger er krypteret i hvile og vises aldrig for andre medlemmer — cirkler ser altid kun et anonymt mærkat, medmindre du har valgt at vise dit navn.",
@@ -84,7 +90,6 @@
   },
   "status": {
     "ended": "Denne session er afsluttet",
-    "anonymousByDefault": "Anonymt som standard",
     "startsAt": "Starter {{time}} · anonymt som standard"
   },
   "emptyState": {
@@ -108,16 +113,23 @@
     "showOfflineParticipants_other": "Vis {{count}} offline-deltagere",
     "notCurrentlyOnline": "Ikke online lige nu",
     "userCount_one": "{{count}} bruger",
-    "userCount_other": "{{count}} brugere"
+    "userCount_other": "{{count}} brugere",
+    "participantsButton_one": "Deltagere, {{count}} online",
+    "participantsButton_other": "Deltagere, {{count}} online",
+    "onlineSectionLabel": "Online",
+    "offlineToggle_one": "Offline ({{count}})",
+    "offlineToggle_other": "Offline ({{count}})",
+    "participantsTitle": "Deltagere",
+    "closeParticipants": "Luk"
   },
   "composer": {
+    "memberJoined": "{{name}} tilsluttede sig cirklen",
     "newMessages_one": "{{count}} ny besked",
     "newMessages_other": "{{count}} nye beskeder",
     "sendingIn": "Sender om {{count}}s",
     "skippingIn": "Springer over om {{count}}s",
     "keepTypingToPause": "bliv ved med at skrive for at pause",
-    "placeholderYourTurn": "Del, når det er din tur",
-    "placeholderWaiting": "Skriv din besked — sendes, når det bliver din tur",
+    "placeholder": "Skriv...",
     "send": "Send",
     "sendOptions": "Sendemuligheder",
     "autoSendToggle": "Send automatisk, når tiden løber ud",
@@ -146,7 +158,6 @@
     "agreementFailed": "Der opstod en fejl under registrering af din accept. Prøv igen.",
     "messageHeld": "Din besked blev tilbageholdt til gennemgang og blev ikke sendt til cirklen.",
     "sendFailed": "Der opstod en fejl under afsendelse af beskeden.",
-    "turnSkipped": "Intet svar — din tur blev sprunget over.",
     "skipFailed": "Der opstod en fejl, da din tur skulle springes over.",
     "recentSessionsLoadFailed": "Kunne ikke indlæse seneste sessioner",
     "moreRecentSessionsLoadFailed": "Kunne ikke indlæse flere sessioner",

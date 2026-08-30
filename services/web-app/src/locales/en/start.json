@@ -9,7 +9,8 @@
     "startsIn": "Starts in {{duration}}",
     "live": "Live",
     "startingSoon": "Starting soon",
-    "open": "Open"
+    "open": "Open",
+    "openCalendar": "Open calendar"
   },
   "sizes": {
     "upTo": "Up to {{count}}"
@@ -24,6 +25,7 @@
     "previousSessionsLoadFailed": "Could not load previous circles"
   },
   "choose": {
+    "documentTitle": "Start a circle — MinCirklen",
     "title": "New session",
     "subtitle": "How would you like to begin",
     "joinTitle": "Join an existing circle",
@@ -32,6 +34,7 @@
     "newSubtitle": "Set topic, time, and length"
   },
   "joinPage": {
+    "documentTitle": "Join a circle — MinCirklen",
     "title": "Join a circle",
     "subtitle": "Pick a circle that fits your schedule",
     "searchPlaceholder": "Search circles by name",
@@ -53,6 +56,7 @@
     "back": "Back"
   },
   "newPage": {
+    "documentTitle": "Start a new circle — MinCirklen",
     "title": "Start a new circle",
     "subtitle": "Set the topic, time, and how many can join",
     "circleName": "Circle name",

@@ -101,7 +101,7 @@ export interface SkipTurnDeps {
 }
 
 // The client-side inactivity countdown's "auto-skip" outcome (see
-// dashboardShared.tsx's useTurnCountdown) — the turn holder let a full
+// sessionShared.tsx's useTurnCountdown) — the turn holder let a full
 // countdown pass with nothing drafted, so their turn is forfeited and
 // passed to the next (online) member, exactly like a sent message would
 // advance it, but with no message persisted and no moderation call.

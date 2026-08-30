@@ -31,15 +31,21 @@ export async function joinSession(deps: JoinSessionDeps): Promise<RosterEntry> {
   return deps.joinSession()
 }
 
-// Composes two independent reads: session lifecycle status (still
-// Postgres's own concern) and live turn/roster state (Redis, via
-// websocket-service — see adapters/websocketServiceAdapter.ts's
-// getTurnState). Only reads the live state once the session is confirmed
-// to still exist, so a deleted/never-existed session is a clean null
-// rather than a websocket-service round trip that would 404 anyway.
+// Composes three independent reads: session lifecycle status (Postgres),
+// live turn/roster state (Redis, via websocket-service — see
+// adapters/websocketServiceAdapter.ts's getTurnState), and each roster
+// member's current display name (Postgres/KMS — see
+// userProfileRepository.ts's findDisplayNames). Only reads the live state
+// once the session is confirmed to still exist, so a deleted/never-existed
+// session is a clean null rather than a websocket-service round trip that
+// would 404 anyway. Display names are resolved fresh on every call — see
+// findDisplayNames's own doc comment for why that's what makes toggling
+// stay_anonymous back on immediately mask the name again, with no
+// separate "un-reveal" step needed anywhere.
 export interface GetSessionStateDeps {
   getSessionStatus(): Promise<{ id: string; status: SessionState['status'] } | null>
   getTurnState(): Promise<{ currentTurnUserId: string | null; roster: RosterEntry[]; onlineUserIds: string[] }>
+  findDisplayNames(userIds: string[]): Promise<Map<string, string>>
 }
 
 export async function getSessionState(deps: GetSessionStateDeps): Promise<SessionState | null> {
@@ -47,11 +53,13 @@ export async function getSessionState(deps: GetSessionStateDeps): Promise<Sessio
   if (!statusInfo) return null
 
   const turnState = await deps.getTurnState()
-  return { ...statusInfo, ...turnState }
+  const displayNames = await deps.findDisplayNames(turnState.roster.map((r) => r.userId))
+  const roster = turnState.roster.map((r) => ({ ...r, displayName: displayNames.get(r.userId) ?? null }))
+  return { ...statusInfo, ...turnState, roster }
 }
 
 // Read-only existence check — no join, no last_visited_at touch. Used
-// before the community-guidelines gate (DashboardPage.tsx): a user who
+// before the community-guidelines gate (SessionPage.tsx): a user who
 // hasn't agreed yet must not be silently joined to a session just by
 // having its URL open, and confirming the session is even real before
 // asking them to click through the guidelines saves them the trip if
@@ -94,7 +102,7 @@ export async function listRecentVisits(deps: ListRecentVisitsDeps): Promise<List
 }
 
 // Called once a user has already joined (visitSession above) — the
-// community-guidelines gate (DashboardPage.tsx's CommunityGuidelinesModal)
+// community-guidelines gate (SessionPage.tsx's CommunityGuidelinesModal)
 // lives per-session-membership-row now, not per-user. A thin passthrough:
 // the repository does the actual union-across-sessions/sync work (see
 // checkAndSyncGuidelines) so a user who agreed to an older set of

@@ -21,21 +21,21 @@ import { useJsonLd } from './useJsonLd'
 import { SITE_ORIGIN, SITE_NAME } from './siteConfig'
 import heroImage from './assets/hero-circle.webp'
 
-// English only, deliberately — this is <meta description>/JSON-LD content
-// for a single canonical URL with no per-locale routing (hreflang), not
-// on-page copy, so translating it wouldn't actually serve localized
-// search results.
-const DESCRIPTION =
-  "MinCirklen is an anonymous, AI-moderated peer-support platform. No profiles, no directory, no way to look anyone up — just small, moderated circles to be heard in."
-
 export function LandingPage() {
   const { t } = useTranslation('landing')
   const pageUrl = `${SITE_ORIGIN}${landingPath()}`
   const imageUrl = `${SITE_ORIGIN}${heroImage}`
+  // No hreflang routing (one canonical URL for every language), so a
+  // crawler doing a single fetch still only ever sees whichever language
+  // it happened to request — but a real visitor's browser tab
+  // title/meta should match whatever language they're actually looking
+  // at, so this is translated the same as the page body rather than
+  // left as a permanent English snapshot.
+  const description = t('meta.description')
 
   usePageMeta({
-    title: 'MinCirklen — Anonymous, moderated peer-support circles',
-    description: DESCRIPTION,
+    title: t('meta.title'),
+    description,
     path: landingPath(),
     image: imageUrl,
   })
@@ -47,14 +47,14 @@ export function LandingPage() {
         '@type': 'Organization',
         name: SITE_NAME,
         url: pageUrl,
-        description: DESCRIPTION,
+        description,
         logo: imageUrl,
       },
       {
         '@type': 'WebSite',
         name: SITE_NAME,
         url: pageUrl,
-        description: DESCRIPTION,
+        description,
       },
     ],
   })

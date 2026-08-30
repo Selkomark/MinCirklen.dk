@@ -37,7 +37,7 @@ export function Select<T extends object>({
             more than the closed trigger has room for; `textValue` is each
             SelectItem's short, trigger-appropriate label when it differs
             from what's shown in the open list (see the Preferences
-            timezone picker in DashboardPage.tsx for the motivating case). */}
+            timezone picker in SessionPage.tsx for the motivating case). */}
         <SelectValue className="ds-select__value">
           {({ selectedText, isPlaceholder }) => (isPlaceholder ? placeholder : selectedText)}
         </SelectValue>

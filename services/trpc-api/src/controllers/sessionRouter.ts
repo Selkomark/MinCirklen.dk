@@ -11,11 +11,14 @@ import {
   releaseTurnClaim,
 } from '../adapters/websocketServiceAdapter'
 import { insertModerationEvent } from '../repositories/moderationEventRepository'
+import { findDisplayNames } from '../repositories/userProfileRepository'
 import {
+  insertMessage,
   listMessages as listMessagesRepo,
   recordFlaggedMessage,
   recordPassedMessage,
 } from '../repositories/messageRepository'
+import { insertSessionReport } from '../repositories/sessionReportRepository'
 import {
   NotYourTurnError,
   SessionFullError,
@@ -34,6 +37,7 @@ import {
 } from '../repositories/sessionRepository'
 import { escalate } from '../services/crisisEscalationService'
 import { NotAMemberError, sendMessage as sendMessageService, skipTurn as skipTurnService } from '../services/messageService'
+import { submitSessionReport } from '../services/sessionReportService'
 import * as sessionService from '../services/sessionService'
 import { router, verifiedProcedure } from './trpc'
 import type { AppEnv } from '../context'
@@ -66,6 +70,26 @@ function notifyJoinedFireAndForget(env: AppEnv, sessionId: string, entry: Roster
       console.error('[TURN] failed to notify websocket-service of a join', err)
     },
   )
+}
+
+// Persists a "X joined the circle" system message the same way a real
+// chat message is stored (see messageRepository.ts's `type` column), then
+// relays it fire-and-forget the same way sendMessage's own `publish` does
+// — so it interleaves correctly in history (one cursor-paginated stream,
+// sorted by created_at) and arrives live over the exact same WebSocket
+// path the frontend already renders messages from. The insert itself is
+// awaited (it's a local Postgres write, not a network call to another
+// service) so a page load immediately after joining already sees it, but
+// a failure here must never fail the join itself — caught and logged.
+async function recordAndPublishJoinMessage(env: AppEnv, sessionId: string, userId: string): Promise<void> {
+  try {
+    const message = await insertMessage(env.db, { sessionId, userId, body: 'joined', type: 'system' })
+    void publishMessage(env.websocketServiceUrl, env.internalServiceSecret, sessionId, message).catch((err) => {
+      console.error('[PUBLISH] failed to relay join message to websocket-service', err)
+    })
+  } catch (err) {
+    console.error('[JOIN] failed to persist join system message', err)
+  }
 }
 
 export const sessionRouter = router({
@@ -101,7 +125,10 @@ export const sessionRouter = router({
           // stale browse-page click) must not re-announce you to
           // everyone currently viewing it. See JoinSessionResult's doc
           // comment in sessionRepository.ts.
-          if (isNewJoin) notifyJoinedFireAndForget(ctx.appEnv, input.sessionId, entry)
+          if (isNewJoin) {
+            notifyJoinedFireAndForget(ctx.appEnv, input.sessionId, entry)
+            await recordAndPublishJoinMessage(ctx.appEnv, input.sessionId, ctx.userId)
+          }
           return entry
         },
       })
@@ -110,7 +137,7 @@ export const sessionRouter = router({
     }
   }),
 
-  // Read-only existence + display-info check — DashboardPage.tsx calls
+  // Read-only existence + display-info check — SessionPage.tsx calls
   // this first, before the community-guidelines gate, so a not-found
   // session shows 404 immediately without joining anyone or making them
   // click through guidelines for a dead link. No membership side effect;
@@ -125,11 +152,11 @@ export const sessionRouter = router({
     return summary
   }),
 
-  // Navigating to /s/:sessionId — DashboardPage.tsx calls this right
+  // Navigating to /s/:sessionId — SessionPage.tsx calls this right
   // after getSummary above confirms the session exists, and *before* the
   // guidelines gate (checkGuidelines/agreeToGuidelines below): agreement
   // now lives on the session_users row itself (see
-  // migrations/0013_move_agreements_to_session_users.ts), so that row
+  // migrations/0001_init.ts), so that row
   // has to exist first. Not a dedicated "browse" action like `join`
   // above (StartJoinPage.tsx) — this is the always-on entry point.
   // Re-checks existence (NOT_FOUND if it doesn't exist — a defensive
@@ -150,7 +177,10 @@ export const sessionRouter = router({
           // member just reopening the page), so this must stay
           // conditional or every revisit falsely announces a fresh
           // join to everyone currently viewing the session.
-          if (isNewJoin) notifyJoinedFireAndForget(ctx.appEnv, input.sessionId, entry)
+          if (isNewJoin) {
+            notifyJoinedFireAndForget(ctx.appEnv, input.sessionId, entry)
+            await recordAndPublishJoinMessage(ctx.appEnv, input.sessionId, ctx.userId)
+          }
           return entry
         },
         getSessionSummary: () => getSessionSummaryRepo(ctx.appEnv.db, input.sessionId),
@@ -197,6 +227,7 @@ export const sessionRouter = router({
     return sessionService.getSessionState({
       getSessionStatus: () => getSessionStatusRepo(ctx.appEnv.db, input.sessionId),
       getTurnState: () => getTurnState(websocketServiceUrl, internalServiceSecret, input.sessionId),
+      findDisplayNames: (userIds) => findDisplayNames(ctx.appEnv.db, ctx.appEnv.vault, userIds),
     })
   }),
 
@@ -270,7 +301,7 @@ export const sessionRouter = router({
     }),
 
   // The client-side inactivity countdown's auto-skip outcome
-  // (dashboardShared.tsx's useTurnCountdown) — the holder let a full
+  // (sessionShared.tsx's useTurnCountdown) — the holder let a full
   // countdown elapse with nothing drafted. Forfeits the turn to the next
   // (online) member; nothing is persisted or moderated. claimTurn's own
   // check is what makes this safe: only whoever genuinely holds the turn
@@ -293,4 +324,33 @@ export const sessionRouter = router({
       throw toTRPCError(err)
     }
   }),
+
+  // ReportSessionModal (SessionPage.tsx) — a member flagging one or more
+  // other members' behavior to a human, distinct from sendMessage's own
+  // classify() call (the AI moderator acting on message content). See
+  // services/sessionReportService.ts's doc comment for why this
+  // deliberately doesn't try to swallow persistence failures the way
+  // escalateCrisis above does.
+  report: verifiedProcedure
+    .input(sessionIdInput.extend({ aboutUserIds: z.array(z.string().uuid()).min(1), body: z.string().trim().min(1).max(2000) }))
+    .mutation(async ({ ctx, input }) => {
+      const { db } = ctx.appEnv
+      const { sessionId, aboutUserIds, body } = input
+      const reporterUserId = ctx.userId
+
+      try {
+        await submitSessionReport(
+          {
+            isReporterMember: () => isSessionMember(db, sessionId, reporterUserId),
+            isAboutUserMember: (userId) => isSessionMember(db, sessionId, userId),
+            insertReport: () => insertSessionReport(db, { sessionId, reporterUserId, aboutUserIds, body }),
+            logReport: (params) => console.error('[REPORT] session reported', params),
+          },
+          { sessionId, reporterUserId, aboutUserIds, body },
+        )
+        return { status: 'submitted' as const }
+      } catch (err) {
+        throw toTRPCError(err)
+      }
+    }),
 })

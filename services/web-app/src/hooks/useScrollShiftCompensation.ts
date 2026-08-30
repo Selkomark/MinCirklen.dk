@@ -11,7 +11,7 @@ import { useLayoutEffect, useRef, type RefObject } from 'react'
 // that change has actually landed in the DOM (never for a plain bottom
 // append — only changes above the viewport need compensating). First used
 // by pages/start/shared.tsx's useOpenSessions + StartJoinPage.tsx's
-// windowed browse list; reused as-is for DashboardPage.tsx's
+// windowed browse list; reused as-is for SessionPage.tsx's
 // scroll-up-for-older-messages pagination.
 export function useScrollShiftCompensation(containerRef: RefObject<HTMLElement | null>, shiftVersion: number) {
   // Snapshotted right before a load that might affect content above the
