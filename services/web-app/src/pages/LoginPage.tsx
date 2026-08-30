@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { Button } from '../components/Button'
 import { Alert } from '../components/Alert'
 import { publicPagePath } from '../publicPages/pages'
@@ -8,17 +9,18 @@ import { useDocumentTitle } from '../useDocumentTitle'
 
 // oauthController.ts's callback redirects here with ?error=<code> instead
 // of ever showing its own error page — this is the only place that code
-// is translated into copy a user can act on.
-const LOGIN_ERROR_MESSAGES: Record<string, string> = {
-  oauth_state: 'Your sign-in link expired. Please try again.',
-  google_failed: "We couldn't confirm that with Google. Please try again.",
-  login_failed: 'Something went wrong on our end. Please try again.',
+// is translated into copy a user can act on. Keyed to i18n keys, not
+// literal English strings — resolved via t() in the component below.
+const LOGIN_ERROR_KEYS: Record<string, string> = {
+  oauth_state: 'errors.oauthState',
+  google_failed: 'errors.googleFailed',
+  login_failed: 'errors.loginFailed',
 }
 
-function loginErrorMessage(): string | null {
+function loginErrorKey(): string | null {
   const code = new URLSearchParams(window.location.search).get('error')
   if (!code) return null
-  return LOGIN_ERROR_MESSAGES[code] ?? LOGIN_ERROR_MESSAGES.login_failed ?? null
+  return LOGIN_ERROR_KEYS[code] ?? LOGIN_ERROR_KEYS.login_failed ?? null
 }
 
 // Google is the only working provider. The others are kept (not deleted)
@@ -27,13 +29,14 @@ function loginErrorMessage(): string | null {
 const SHOW_OTHER_PROVIDERS = false
 
 const OTHER_PROVIDERS = [
-  { id: 'apple', label: 'Continue with Apple' },
-  { id: 'microsoft', label: 'Continue with Microsoft' },
+  { id: 'apple', labelKey: 'otherProviders.apple' },
+  { id: 'microsoft', labelKey: 'otherProviders.microsoft' },
 ]
 
 export function LoginPage() {
+  const { t } = useTranslation('auth')
   useDocumentTitle('Log in — MinCirklen')
-  const errorMessage = loginErrorMessage()
+  const errorKey = loginErrorKey()
 
   return (
     <div style={{ minHeight: '100vh', fontFamily: 'var(--font-family-base)' }}>
@@ -50,10 +53,10 @@ export function LoginPage() {
         <div style={{ width: '100%', maxWidth: 440, display: 'flex', flexDirection: 'column', gap: 'clamp(20px, 4vw, 28px)' }}>
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: 'var(--font-size-xl)', fontWeight: 'var(--font-weight-bold)', color: 'var(--text-primary)' }}>
-              Log in to MinCirklen
+              {t('login.title')}
             </div>
             <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginTop: 6 }}>
-              One quick sign-in, then straight to your circle.
+              {t('login.subtitle')}
             </div>
           </div>
 
@@ -68,7 +71,7 @@ export function LoginPage() {
               gap: 12,
             }}
           >
-            {errorMessage && <Alert variant="urgent">{errorMessage}</Alert>}
+            {errorKey && <Alert variant="urgent">{t(errorKey)}</Alert>}
 
             <Button
               variant="secondary"
@@ -78,7 +81,7 @@ export function LoginPage() {
               style={{ width: '100%' }}
             >
               <GoogleIcon />
-              Continue with Google
+              {t('login.continueWithGoogle')}
             </Button>
 
             {SHOW_OTHER_PROVIDERS &&
@@ -89,25 +92,24 @@ export function LoginPage() {
                   isDisabled
                   style={{ width: '100%', justifyContent: 'space-between' }}
                 >
-                  <span>{provider.label}</span>
-                  <span style={{ fontSize: 'var(--font-size-xs)' }}>Coming soon</span>
+                  <span>{t(provider.labelKey)}</span>
+                  <span style={{ fontSize: 'var(--font-size-xs)' }}>{t('login.comingSoon')}</span>
                 </Button>
               ))}
 
             <Alert variant="safe" style={{ marginTop: 8 }}>
-              We only use this to keep circles free of spam and duplicate accounts. Nothing
-              from your account is ever shown to other users.
+              {t('login.privacyNote')}
             </Alert>
           </div>
 
           <div style={{ textAlign: 'center', fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>
-            By continuing you agree to our{' '}
+            {t('login.agreeToTermsPrefix')}{' '}
             <a href={publicPagePath('terms-and-conditions')} className="ds-inline-link">
-              Terms and Conditions
+              {t('login.termsAndConditions')}
             </a>{' '}
-            and{' '}
+            {t('login.and')}{' '}
             <a href={publicPagePath('privacy-policy')} className="ds-inline-link">
-              Privacy Policy
+              {t('login.privacyPolicy')}
             </a>
             .
           </div>

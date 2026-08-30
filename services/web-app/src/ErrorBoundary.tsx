@@ -1,5 +1,6 @@
 import { Component, type ReactNode } from 'react'
 import { ErrorPage } from './pages/ErrorPage'
+import i18n from './i18n'
 
 interface Props {
   children: ReactNode
@@ -28,7 +29,14 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
-      return <ErrorPage code={500} title="Something went wrong" message="An unexpected error occurred. Please try again." />
+      // A class component, not `useTranslation` — reads the i18next
+      // singleton directly. Every namespace (including "errors") is
+      // preloaded eagerly at init (see i18n.ts's `ns: NAMESPACES`), so by
+      // the time a real runtime crash can happen this is already resolved;
+      // this doesn't need the hook's re-render-on-load subscription.
+      return (
+        <ErrorPage code={500} title={i18n.t('errors:boundary.title')} message={i18n.t('errors:boundary.message')} />
+      )
     }
     return this.props.children
   }

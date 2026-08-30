@@ -1,0 +1,21 @@
+{
+  "toggleTheme": "Toggle theme",
+  "nav": {
+    "preferences": "Preferences",
+    "profile": "Profile",
+    "settings": "Settings",
+    "privacy": "Privacy & data",
+    "logOut": "Log out"
+  },
+  "account": {
+    "title": "Account"
+  },
+  "actions": {
+    "saveChanges": "Save changes",
+    "saved": "Saved."
+  },
+  "errors": {
+    "saveFailed": "Something went wrong saving your changes.",
+    "logoutFailed": "Something went wrong logging out."
+  }
+}

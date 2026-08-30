@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { Badge } from './components/Badge'
 import { Row } from './components/Row'
 import { Col } from './components/Col'
@@ -20,10 +21,15 @@ import { useJsonLd } from './useJsonLd'
 import { SITE_ORIGIN, SITE_NAME } from './siteConfig'
 import heroImage from './assets/hero-circle.webp'
 
+// English only, deliberately — this is <meta description>/JSON-LD content
+// for a single canonical URL with no per-locale routing (hreflang), not
+// on-page copy, so translating it wouldn't actually serve localized
+// search results.
 const DESCRIPTION =
   "MinCirklen is an anonymous, AI-moderated peer-support platform. No profiles, no directory, no way to look anyone up — just small, moderated circles to be heard in."
 
 export function LandingPage() {
+  const { t } = useTranslation('landing')
   const pageUrl = `${SITE_ORIGIN}${landingPath()}`
   const imageUrl = `${SITE_ORIGIN}${heroImage}`
 
@@ -64,20 +70,24 @@ export function LandingPage() {
             src={heroImage}
             width={640}
             height={640}
-            alt="Illustration of people in a MinCirklen peer-support circle, talking anonymously and at ease"
-            fetchPriority="high"
+            alt={t('hero.imageAlt')}
+            // Lowercase via spread, not a typed fetchPriority prop — this
+            // React version (18.3) doesn't recognize the camelCase prop yet
+            // (that mapping arrived in React 19) and warns on it; lowercase
+            // passes straight through as the plain HTML attribute, which
+            // browsers honor regardless. The Record<string, string> spread
+            // sidesteps ImgHTMLAttributes not knowing this key yet either.
+            {...({ fetchpriority: 'high' } as Record<string, string>)}
           />
         }
       >
-        <Badge variant="safe">Just launched — early pilot</Badge>
-        <Heading level={1}>A space to be heard, without judgment</Heading>
-        <Text variant="lead">
-          Anonymous, moderated peer-support circles. We're brand new — join one of our first circles and help shape what this becomes.
-        </Text>
+        <Badge variant="safe">{t('hero.badge')}</Badge>
+        <Heading level={1}>{t('hero.title')}</Heading>
+        <Text variant="lead">{t('hero.lead')}</Text>
         <div style={{ display: 'flex', gap: 12 }}>
-          <LinkButton href={loginPath()}>Join a circle</LinkButton>
+          <LinkButton href={loginPath()}>{t('hero.joinCircle')}</LinkButton>
           <LinkButton href={publicPagePath('how-it-works')} variant="secondary">
-            Learn more
+            {t('hero.learnMore')}
           </LinkButton>
         </div>
       </Hero>
@@ -85,38 +95,35 @@ export function LandingPage() {
       <Section tone="raised" spacing="lg">
         <Row>
           <Col span={12} md={6}>
-            <Stat value="Anonymous" label="By default, every circle" />
+            <Stat value={t('stats.anonymousValue')} label={t('stats.anonymousLabel')} />
           </Col>
           <Col span={12} md={6}>
-            <Stat value="Zero" label="Profiles, directories, or ways to look someone up" />
+            <Stat value={t('stats.zeroValue')} label={t('stats.zeroLabel')} />
           </Col>
         </Row>
       </Section>
 
       <Section tone="app" spacing="xl">
         <div style={{ textAlign: 'center', marginBottom: 'var(--space-7)' }}>
-          <Heading level={2}>Built around safety</Heading>
+          <Heading level={2}>{t('features.title')}</Heading>
           <Text variant="lead" style={{ marginTop: 'var(--space-2)' }}>
-            Every part of the experience is designed to protect you first.
+            {t('features.lead')}
           </Text>
         </div>
         <Row gap={6}>
           <Col span={12} md={4}>
-            <Feature icon="🛡" title="Moderated">
-              A trained facilitator is present in every session, and you can leave or report at
-              any time.
+            <Feature icon="🛡" title={t('features.moderatedTitle')}>
+              {t('features.moderatedBody')}
             </Feature>
           </Col>
           <Col span={12} md={4}>
-            <Feature icon="🤝" title="Anonymous by default">
-              Share as much or as little as you want — nobody sees your real name unless you
-              choose to share it.
+            <Feature icon="🤝" title={t('features.anonymousTitle')}>
+              {t('features.anonymousBody')}
             </Feature>
           </Col>
           <Col span={12} md={4}>
-            <Feature icon="🕊" title="No pressure">
-              Listen-only is always welcome. There's no obligation to speak, and no advice-giving
-              unless it's asked for.
+            <Feature icon="🕊" title={t('features.noPressureTitle')}>
+              {t('features.noPressureBody')}
             </Feature>
           </Col>
         </Row>
@@ -124,52 +131,44 @@ export function LandingPage() {
 
       <Section tone="sunken" spacing="xl">
         <div style={{ textAlign: 'center', marginBottom: 'var(--space-7)' }}>
-          <Heading level={2}>Why we're building this</Heading>
+          <Heading level={2}>{t('testimonial.title')}</Heading>
         </div>
         <Row>
           <Col span={12} md={8} style={{ margin: '0 auto' }}>
-            <Testimonial
-              quote="Make a safe and cosy place on the internet where people can finally open up. That's the whole idea — we're just getting started, and we'd rather grow slowly and safely than fast and reckless."
-              name="Mahan Sagharchi"
-              role="Founder, MinCirklen"
-            />
+            <Testimonial quote={t('testimonial.quote')} name="Mahan Sagharchi" role={t('testimonial.role')} />
           </Col>
         </Row>
       </Section>
 
       <Section tone="app" spacing="xl">
         <div style={{ textAlign: 'center', marginBottom: 'var(--space-7)' }}>
-          <Heading level={2}>Simple, honest pricing</Heading>
+          <Heading level={2}>{t('pricing.title')}</Heading>
           <Text variant="lead" style={{ marginTop: 'var(--space-2)' }}>
-            We're in early pilot and haven't set pricing yet — there will always be a free way in.
+            {t('pricing.lead')}
           </Text>
         </div>
         <Row gap={6}>
           <Col span={12} md={6}>
             <PricingCard
-              name="Free, during pilot"
-              price="Free"
-              features={['Unlimited sessions', 'Anonymous by default', 'No limit on conversation length']}
+              name={t('pricing.freeName')}
+              price={t('pricing.freePrice')}
+              features={[t('pricing.freeFeature1'), t('pricing.freeFeature2'), t('pricing.freeFeature3')]}
               cta={
                 <LinkButton href={loginPath()} variant="secondary" style={{ width: '100%' }}>
-                  Get started
+                  {t('pricing.getStarted')}
                 </LinkButton>
               }
             />
           </Col>
           <Col span={12} md={6}>
             <PricingCard
-              name="Support MinCirklen"
-              price="TBD"
-              period="pricing to be decided"
-              features={[
-                'A way to help fund hosting and safety review',
-                'Same turn length and typing time as free',
-                "We'll announce details before anything changes",
-              ]}
+              name={t('pricing.supportName')}
+              price={t('pricing.supportPrice')}
+              period={t('pricing.supportPeriod')}
+              features={[t('pricing.supportFeature1'), t('pricing.supportFeature2'), t('pricing.supportFeature3')]}
               cta={
                 <LinkButton href={loginPath()} style={{ width: '100%' }}>
-                  Get started
+                  {t('pricing.getStarted')}
                 </LinkButton>
               }
               highlighted
@@ -179,10 +178,14 @@ export function LandingPage() {
       </Section>
 
       <CTASection
-        title="Ready to join a circle?"
-        actions={<LinkButton href={loginPath()} variant="secondary">Get started — it's free</LinkButton>}
+        title={t('cta.title')}
+        actions={
+          <LinkButton href={loginPath()} variant="secondary">
+            {t('cta.action')}
+          </LinkButton>
+        }
       >
-        It only takes a minute, and you can stay anonymous the whole way.
+        {t('cta.body')}
       </CTASection>
 
       <SiteFooter />

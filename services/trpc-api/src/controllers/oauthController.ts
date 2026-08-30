@@ -4,7 +4,7 @@ import { Hono, type Context } from 'hono'
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import { GoogleOAuthError, buildAuthorizationUrl, exchangeCodeForTokens, verifyIdToken } from '../adapters/googleOAuthAdapter'
 import { hashIdentitySubject } from '../auth/identityHash'
-import { SESSION_COOKIE_NAME, buildSessionCookie, type AppEnv } from '../context'
+import { SESSION_COOKIE_NAME, buildSessionCookie, sessionCookieDomain, type AppEnv } from '../context'
 import { findUserIdByIdentity, linkIdentity } from '../repositories/userIdentityRepository'
 import { insertUser, userExists } from '../repositories/userRepository'
 import { userProfileExists } from '../repositories/userProfileRepository'
@@ -118,7 +118,7 @@ export function createOAuthController(env: AppEnv): Hono {
       )
 
       const token = createSessionToken(userId, env.authSecret)
-      c.header('set-cookie', buildSessionCookie(token), { append: true })
+      c.header('set-cookie', buildSessionCookie(token, env.publicBaseUrl), { append: true })
 
       // Based on whether a profile actually exists, not on whether the
       // identity link is new — a user who linked Google but abandoned the
@@ -139,7 +139,7 @@ export function createOAuthController(env: AppEnv): Hono {
       // retry risks the exact same failure on the next attempt. Clearing
       // it drops the browser back to a clean anonymous state so a retry
       // has a real chance of succeeding.
-      deleteCookie(c, SESSION_COOKIE_NAME, { path: '/' })
+      deleteCookie(c, SESSION_COOKIE_NAME, { path: '/', domain: sessionCookieDomain(env.publicBaseUrl) })
       return loginErrorRedirect(c, env, errorCode)
     }
   })

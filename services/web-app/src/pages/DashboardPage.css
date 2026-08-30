@@ -2,12 +2,172 @@
   display: none;
 }
 
+.dash-panel-header {
+  padding: var(--space-4) var(--space-6);
+}
+
+.dash-messages {
+  padding: var(--space-5) var(--space-6);
+}
+
+.dash-composer {
+  padding: var(--space-4) var(--space-6);
+}
+
+/* Wider than the default .ds-modal (480px) to fit the two-column
+   nav + content layout — see DashboardPage.tsx's AccountModal. */
+.dash-account-modal {
+  max-width: 640px;
+}
+
+.dash-account-modal__nav-item {
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.dash-account-modal__nav-item:hover {
+  background: var(--surface-sunken);
+}
+
+.dash-account-modal__nav-item[aria-current='true'] {
+  background: var(--accent-safe-surface);
+  color: var(--accent-safe);
+  font-weight: var(--font-weight-medium);
+}
+
+.dash-account-modal__nav-item--urgent {
+  width: 100%;
+  color: var(--signal-urgent);
+}
+
+.dash-account-modal__nav-item--urgent:hover {
+  background: var(--signal-urgent-surface);
+}
+
+/* Smaller than these components' shared default sizing (44px/font-size-md)
+   — scoped to just the profile edit form via this class, rather than
+   changing TextField/Select everywhere else they're used (RegisterPage,
+   StartNewPage, etc.). */
+.dash-account-modal__field .ds-textfield__input,
+.dash-account-modal__field .ds-select__trigger {
+  height: 36px;
+  padding: 0 var(--space-3);
+  font-size: var(--font-size-sm);
+}
+
+.dash-account-modal__field .ds-textfield__label,
+.dash-account-modal__field .ds-select__label {
+  font-size: var(--font-size-xs);
+}
+
+/* Smaller than the default 44px .ds-textfield__input — the sidebar's
+   own "New session" button next to it is already compact, so a
+   full-height search box reads as oversized in that column. */
+.dash-sidebar-search {
+  height: 34px;
+  padding: 0 var(--space-3);
+  font-size: var(--font-size-sm);
+}
+
+.dash-account-modal__save-btn {
+  height: 36px;
+  padding: 0 var(--space-4);
+  font-size: var(--font-size-sm);
+}
+
 .dash-drawer-backdrop {
   display: none;
 }
 
 .dash-drawer {
   display: none;
+}
+
+.dash-loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in oklch, var(--surface-app) 55%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  opacity: 1;
+  transition: opacity 260ms var(--easing-standard);
+  animation: dash-loading-overlay-in var(--duration-base) var(--easing-standard);
+}
+
+.dash-loading-overlay--exiting {
+  opacity: 0;
+}
+
+.dash-loading-overlay__card {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+  color: var(--accent-safe);
+}
+
+@keyframes dash-loading-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dash-loading-overlay {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* Same visual language as components/TextField's .ds-textfield__input, but
+   height isn't fixed — JS (DashboardPage.tsx's auto-grow effect) sets an
+   explicit pixel height to fit the content, capped by max-height below at
+   4 lines' worth, at which point overflow-y:auto takes over as an
+   internal scroll instead of growing any further. */
+.dash-composer-textarea {
+  min-height: 44px;
+  max-height: calc(1.6em * 4 + 20px);
+  padding: 10px var(--space-4);
+  line-height: 1.6;
+  resize: none;
+  overflow-y: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-raised);
+  color: var(--text-primary);
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-md);
+  transition: border-color var(--duration-fast) var(--easing-standard);
+}
+
+.dash-composer-textarea:hover {
+  border-color: var(--border-strong);
+}
+
+.dash-composer-textarea:focus-visible {
+  border-color: var(--accent-safe);
+}
+
+.dash-composer-textarea:disabled {
+  opacity: 0.6;
 }
 
 .dash-composer-actions--desktop {
@@ -19,6 +179,87 @@
 
 .dash-composer-actions--mobile {
   display: none;
+}
+
+.dash-send-split {
+  position: relative;
+  display: flex;
+}
+
+.dash-send-split__main {
+  height: 44px;
+  padding: 0 var(--space-4);
+  border: none;
+  border-radius: var(--radius-md);
+  background: var(--accent-safe);
+  color: var(--text-on-accent);
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.dash-send-split__main:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.dash-send-split:has(.dash-send-split__toggle) .dash-send-split__main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.dash-send-split__toggle {
+  height: 44px;
+  width: 32px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-left: 1px solid rgb(0 0 0 / 0.15);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  background: var(--accent-safe);
+  color: var(--text-on-accent);
+  cursor: pointer;
+}
+
+.dash-send-split__toggle[aria-expanded='true'] {
+  background: var(--accent-safe-hover, var(--accent-safe));
+}
+
+.dash-send-backdrop {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  z-index: 40;
+}
+
+.dash-send-menu {
+  position: absolute;
+  bottom: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 41;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  box-shadow: var(--shadow-lg);
+  white-space: nowrap;
+}
+
+.dash-send-menu__option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
 }
 
 @media (max-width: 768px) {
@@ -39,6 +280,20 @@
     background: transparent;
     color: var(--text-primary);
     cursor: pointer;
+  }
+
+  /* Tighter than the desktop --space-6 (32px) horizontal gutters — on a
+     narrow phone viewport that much padding on both sides reads as wasted
+     space around message bubbles that are already narrow. */
+  .dash-panel-header,
+  .dash-composer {
+    padding-left: var(--space-3);
+    padding-right: var(--space-3);
+  }
+
+  .dash-messages {
+    padding-left: var(--space-3);
+    padding-right: var(--space-3);
   }
 
   .dash-drawer-backdrop {
@@ -101,69 +356,5 @@
   .dash-composer-actions--mobile {
     display: flex;
     margin-left: auto;
-  }
-
-  .dash-send-split {
-    position: relative;
-    display: flex;
-  }
-
-  .dash-send-split__main {
-    height: 44px;
-    padding: 0 var(--space-4);
-    border: none;
-    border-radius: var(--radius-md);
-    background: var(--accent-safe);
-    color: var(--text-on-accent);
-    font-family: var(--font-family-base);
-    font-size: var(--font-size-sm);
-    font-weight: var(--font-weight-medium);
-    cursor: pointer;
-    white-space: nowrap;
-  }
-
-  .dash-send-split__main:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-
-  .dash-send-split:has(.dash-send-split__toggle) .dash-send-split__main {
-    border-top-right-radius: 0;
-    border-bottom-right-radius: 0;
-  }
-
-  .dash-send-split__toggle {
-    height: 44px;
-    width: 32px;
-    flex: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border: none;
-    border-left: 1px solid rgb(0 0 0 / 0.15);
-    border-radius: 0 var(--radius-md) var(--radius-md) 0;
-    background: var(--accent-safe);
-    color: var(--text-on-accent);
-    cursor: pointer;
-  }
-
-  .dash-send-backdrop {
-    position: fixed;
-    inset: 0;
-    background: transparent;
-    z-index: 40;
-  }
-
-  .dash-send-menu {
-    position: absolute;
-    bottom: calc(100% + var(--space-2));
-    right: 0;
-    z-index: 41;
-    background: var(--surface-raised);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-md);
-    padding: var(--space-3);
-    box-shadow: var(--shadow-lg);
-    white-space: nowrap;
   }
 }

@@ -1,0 +1,82 @@
+{
+  "shared": {
+    "stepOf": "Trinn {{step}} av {{total}}",
+    "minutesShort": "{{count}} min",
+    "hours_one": "{{count}} time",
+    "hours_other": "{{count}} timer",
+    "days_one": "{{count}} dag",
+    "days_other": "{{count}} dager",
+    "startsIn": "Starter om {{duration}}",
+    "live": "Live",
+    "startingSoon": "Starter snart",
+    "open": "Åpen"
+  },
+  "sizes": {
+    "upTo": "Opptil {{count}}"
+  },
+  "durations": {
+    "openEnded": "Åpen slutt"
+  },
+  "errors": {
+    "topicsLoadFailed": "Kunne ikke laste inn emner",
+    "sessionsLoadFailed": "Kunne ikke laste inn åpne sirkler",
+    "moreSessionsLoadFailed": "Kunne ikke laste inn flere sirkler",
+    "previousSessionsLoadFailed": "Kunne ikke laste inn tidligere sirkler"
+  },
+  "choose": {
+    "title": "Ny økt",
+    "subtitle": "Hvordan vil du begynne",
+    "joinTitle": "Bli med i en eksisterende sirkel",
+    "joinSubtitle": "Bla gjennom sirkler som allerede dannes",
+    "newTitle": "Start en ny sirkel",
+    "newSubtitle": "Angi emne, tid og lengde"
+  },
+  "joinPage": {
+    "title": "Bli med i en sirkel",
+    "subtitle": "Velg en sirkel som passer timeplanen din",
+    "searchPlaceholder": "Søk sirkler etter navn",
+    "showFilters": "Vis filtre",
+    "topic": "Emne",
+    "any": "Alle",
+    "groupSize": "Gruppestørrelse",
+    "date": "Dato",
+    "duration": "Varighet",
+    "clear": "Tøm",
+    "search": "Søk",
+    "scrollUpHint": "Scroll opp for senere sirkler",
+    "scrollDownHint": "Scroll ned for tidligere sirkler",
+    "noMatches": "Ingen åpne sirkler samsvarer med disse filtrene",
+    "sessionMeta": "{{timing}} · {{duration}} · {{joined}}/{{capacity}}",
+    "circleFilledUp": "Den sirkelen ble nettopp full — velg en annen.",
+    "joinFailed": "Noe gikk galt da du skulle bli med i sirkelen.",
+    "cancel": "Avbryt",
+    "back": "Tilbake"
+  },
+  "newPage": {
+    "title": "Start en ny sirkel",
+    "subtitle": "Angi emne, tid og hvor mange som kan bli med",
+    "circleName": "Sirkelens navn",
+    "circleNameHint": "Vises for andre som blar gjennom sirkler å bli med i — gjør den til din egen",
+    "circleNamePlaceholder": "f.eks. Søndag kveld innsjekk",
+    "topic": "Emne",
+    "dateAndTime": "Dato og tid",
+    "date": "Dato",
+    "time": "Tid",
+    "length": "Lengde",
+    "groupSize": "Gruppestørrelse",
+    "cancel": "Avbryt",
+    "back": "Tilbake",
+    "continue": "Fortsett",
+    "beforeYouBegin": "Før du begynner",
+    "startingName": "Starter \"{{name}}\"",
+    "anonymousNote": "Du vises for andre kun som en anonym bruker. Ingen i denne sirkelen ser navnet, bildet eller kontoopplysningene dine.",
+    "understandAnonymous": "Jeg forstår at denne sirkelen er anonym som standard",
+    "agreeToThePrefix": "Jeg godtar",
+    "communityGuidelines": "fellesskapsreglene",
+    "termsOfService": "vilkårene for bruk",
+    "liabilityNote": "og aksepterer at MinCirklen ikke er ansvarlig for råd eller utfall som deles i denne sirkelen",
+    "startCircle": "Start sirkel",
+    "createFailed": "Noe gikk galt da sirkelen skulle startes.",
+    "createdButJoinFailed": "Sirkelen din ble opprettet, men det gikk ikke å bli med — prøv igjen."
+  }
+}

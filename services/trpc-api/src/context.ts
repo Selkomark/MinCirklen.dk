@@ -4,8 +4,6 @@ import type { FetchCreateContextFnOptions } from '@trpc/server/adapters/fetch'
 import { getCookie } from 'hono/cookie'
 import type { Context as HonoContext } from 'hono'
 import type { Kysely } from 'kysely'
-import type { Redis } from 'ioredis'
-import type { NatsConnection } from 'nats'
 import type { GoogleOAuthEndpoints } from './adapters/googleOAuthAdapter'
 import type { KmsConfig } from './adapters/kmsAdapter'
 import { touchUser } from './repositories/userRepository'
@@ -14,26 +12,41 @@ import { resolveSession } from './services/authService'
 export const SESSION_COOKIE_NAME = 'mc_session'
 const SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 180 // 180 days
 
+// Without an explicit Domain, a cookie is host-only to whatever exact host
+// set it — it would never reach a sibling subdomain like
+// socket.dev-mincirklen.dk (websocket-service, a separate host per
+// local-infra/caddy/Caddyfile and docs/tech_spec.md's prod Load Balancer
+// routing). Derived from publicBaseUrl rather than a new env var, since
+// that's already the one place each environment's own domain is
+// configured (services/trpc-api/src/index.ts).
+export function sessionCookieDomain(publicBaseUrl: string): string {
+  return new URL(publicBaseUrl).hostname
+}
+
 // Shared by authRouter.ts (anonymous login) and oauthController.ts (Google
 // login) — both issue the same token format for the same cookie, so the
 // attributes must never drift between the two call sites.
-export function buildSessionCookie(token: string): string {
-  return `${SESSION_COOKIE_NAME}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${SESSION_COOKIE_MAX_AGE_SECONDS}`
+export function buildSessionCookie(token: string, publicBaseUrl: string): string {
+  return `${SESSION_COOKIE_NAME}=${token}; Domain=${sessionCookieDomain(publicBaseUrl)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${SESSION_COOKIE_MAX_AGE_SECONDS}`
 }
 
-// Same name/attributes as buildSessionCookie (a browser matches a cookie
-// to clear by name+path, not just name) with Max-Age=0 — used by
+// Same name/attributes as buildSessionCookie (a browser matches a cookie to
+// clear by name+domain+path, not just name) with Max-Age=0 — used by
 // authRouter.ts's logout mutation.
-export function buildLogoutCookie(): string {
-  return `${SESSION_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`
+export function buildLogoutCookie(publicBaseUrl: string): string {
+  return `${SESSION_COOKIE_NAME}=; Domain=${sessionCookieDomain(publicBaseUrl)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`
 }
 
 export interface AppEnv {
   db: Kysely<Database>
-  redis: Redis
-  nats: NatsConnection
   authSecret: string
   moderationServiceUrl: string
+  // websocket-service's base URL and the shared secret trpc-api presents
+  // on every call to its /internal/* routes (websocketServiceAdapter.ts) —
+  // trpc-api never talks to NATS/Redis directly; those are internal to
+  // websocket-service (its own cross-pod fanout and shared memory).
+  websocketServiceUrl: string
+  internalServiceSecret: string
   publicBaseUrl: string
   // Encryption-as-a-service for user_profiles PII (Vault Transit locally,
   // a cloud KMS in prod) — see adapters/kmsAdapter.ts.

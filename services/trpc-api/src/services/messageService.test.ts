@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { MessageRow } from '../repositories/messageRepository'
 import type { CrisisResource } from './crisisEscalationService'
-import { NotAMemberError, sendMessage, type SendMessageDeps } from './messageService'
+import { NotAMemberError, sendMessage, skipTurn, type SendMessageDeps, type SkipTurnDeps } from './messageService'
 
 const message: MessageRow = {
   id: 'm1',
@@ -45,6 +45,9 @@ function trackedDeps(overrides: Partial<SendMessageDeps> & { classification?: 'p
     },
     publish: () => {
       calls.push('publish')
+    },
+    advanceTurn: async () => {
+      calls.push('advanceTurn')
     },
     ...overrides,
   }
@@ -95,19 +98,19 @@ describe('sendMessage', () => {
     const result = await sendMessage(deps, 'hi')
 
     expect(result).toEqual({ status: 'sent', message })
-    expect(calls).toEqual(['isSessionMember', 'claimTurn', 'classify', 'recordPassedMessage', 'publish'])
+    expect(calls).toEqual(['isSessionMember', 'claimTurn', 'classify', 'recordPassedMessage', 'publish', 'advanceTurn'])
   })
 
-  test('"flag": holds the message back, never persists or publishes it', async () => {
+  test('"flag": holds the message back, never persists or publishes it, but still advances the turn', async () => {
     const { deps, calls } = trackedDeps({ classification: 'flag' })
 
     const result = await sendMessage(deps, 'hi')
 
     expect(result).toEqual({ status: 'held' })
-    expect(calls).toEqual(['isSessionMember', 'claimTurn', 'classify', 'recordFlaggedMessage'])
+    expect(calls).toEqual(['isSessionMember', 'claimTurn', 'classify', 'recordFlaggedMessage', 'advanceTurn'])
   })
 
-  test('"crisis": escalates unconditionally, never persists a message or publishes', async () => {
+  test('"crisis": escalates unconditionally, never persists a message, publishes, or advances the turn', async () => {
     const { deps, calls } = trackedDeps({ classification: 'crisis' })
 
     const result = await sendMessage(deps, 'hi')
@@ -116,5 +119,58 @@ describe('sendMessage', () => {
     expect(calls).toEqual(['isSessionMember', 'claimTurn', 'classify', 'escalateCrisis'])
     expect(calls).not.toContain('recordPassedMessage')
     expect(calls).not.toContain('publish')
+    expect(calls).not.toContain('advanceTurn')
+  })
+})
+
+function trackedSkipDeps(overrides: Partial<SkipTurnDeps> = {}) {
+  const calls: string[] = []
+  const deps: SkipTurnDeps = {
+    isSessionMember: async () => {
+      calls.push('isSessionMember')
+      return true
+    },
+    claimTurn: async () => {
+      calls.push('claimTurn')
+    },
+    advanceTurn: async () => {
+      calls.push('advanceTurn')
+    },
+    ...overrides,
+  }
+  return { deps, calls }
+}
+
+describe('skipTurn', () => {
+  test('rejects a non-member before claiming a turn', async () => {
+    const { deps, calls } = trackedSkipDeps({
+      isSessionMember: async () => {
+        calls.push('isSessionMember')
+        return false
+      },
+    })
+
+    await expect(skipTurn(deps)).rejects.toBeInstanceOf(NotAMemberError)
+    expect(calls).toEqual(['isSessionMember'])
+  })
+
+  test('claims the turn, then advances it — no message, no moderation', async () => {
+    const { deps, calls } = trackedSkipDeps()
+
+    await skipTurn(deps)
+
+    expect(calls).toEqual(['isSessionMember', 'claimTurn', 'advanceTurn'])
+  })
+
+  test('propagates a claimTurn failure (e.g. not actually your turn) without advancing', async () => {
+    const { deps, calls } = trackedSkipDeps({
+      claimTurn: async () => {
+        calls.push('claimTurn')
+        throw new Error('not your turn')
+      },
+    })
+
+    await expect(skipTurn(deps)).rejects.toThrow('not your turn')
+    expect(calls).toEqual(['isSessionMember', 'claimTurn'])
   })
 })

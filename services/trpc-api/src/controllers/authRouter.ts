@@ -15,7 +15,7 @@ export const authRouter = router({
       createToken: (userId) => createSessionToken(userId, ctx.appEnv.authSecret),
     })
 
-    ctx.resHeaders.append('set-cookie', buildSessionCookie(result.token))
+    ctx.resHeaders.append('set-cookie', buildSessionCookie(result.token, ctx.appEnv.publicBaseUrl))
 
     return result
   }),
@@ -24,7 +24,7 @@ export const authRouter = router({
   // fail — an already-expired or missing session cookie is exactly the
   // state this is meant to end up in anyway, so there's nothing to guard.
   logout: publicProcedure.mutation(({ ctx }) => {
-    ctx.resHeaders.append('set-cookie', buildLogoutCookie())
+    ctx.resHeaders.append('set-cookie', buildLogoutCookie(ctx.appEnv.publicBaseUrl))
     return { ok: true }
   }),
 

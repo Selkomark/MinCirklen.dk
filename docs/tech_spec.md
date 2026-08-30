@@ -22,7 +22,7 @@ Core interaction pattern: users join a room (a "circle") of 6–12 people. Turns
  
 Components:
  
-- Client: browser/mobile app, holds a persistent WebSocket connection to the platform for the duration of a session, plus REST/RPC calls for auth, history, and account actions.
+- Client: browser/mobile app, holds one persistent WebSocket connection to the platform for as long as the user is signed in and on a gated page — not opened and closed per circle — telling the server what it currently wants to watch (a specific circle, or a set of circles being browsed), plus REST/RPC calls for auth, history, and account actions.
  
 - Load Balancer: Google-managed HTTPS Load Balancer, terminates TLS, handles WebSocket upgrade, and applies session affinity so a reconnecting client is routed back to a consistent backend where useful.
  
@@ -30,13 +30,13 @@ Components:
  
 - WebSocket Service (GKE Autopilot): handles live, real-time delivery only — pushing round-robin turn state, matchmaking updates, and already-approved messages out to connected clients. It does not ingest or classify incoming messages. Stateless at the pod level — any pod can serve any connected user.
  
-- NATS (GKE Autopilot, JetStream): fanout layer. Since a room's participants can be connected to different WebSocket pods, NATS pub/sub relays a message published by one pod to all pods, so every participant receives it regardless of which pod they're attached to.
+- NATS (GKE Autopilot, core pub/sub — no JetStream/replay): fanout layer, internal to the WebSocket service only. Since a room's participants can be connected to different WebSocket pods, NATS pub/sub relays a message published by one pod to all pods, so every participant receives it regardless of which pod they're attached to. Carries both chat-message and presence (roster/turn/join/live-count) events, on separate subjects. Nothing outside the WebSocket service ever connects to NATS directly.
  
 - Moderation Service (Cloud Run, private subnet): a separate, independently deployed service, called by the tRPC API over gRPC for every inbound message before it's persisted or released. Returns a pass/flag/crisis classification. Internal detection logic and model details are out of scope for this document (proprietary, documented separately).
  
-- Redis (shared): room and matchmaking state — which users are in which room, whose turn it is, engage-window/typing-window timers. Accessed independently by the tRPC API, the WebSocket service, and the web-app, since each needs to read and update different parts of that state.
+- Redis: the WebSocket service's own shared memory, internal to it — live round/roster/presence state (whose turn it is, room membership, who's currently online) across its own pods. Seeded from Cloud SQL the first time a session's state is touched, then authoritative until the process restarts. Neither the tRPC API nor the web-app ever accesses Redis directly; a caller that needs this state asks the WebSocket service's internal HTTP surface for it.
  
-- Cloud SQL (Postgres, shared): durable storage for chat history, session metadata, feedback ratings, and moderation transparency metrics. Accessed independently by the tRPC API, the WebSocket service, and the web-app.
+- Cloud SQL (Postgres, shared): durable storage for chat history, session metadata, feedback ratings, and moderation transparency metrics. Accessed independently by the tRPC API and the WebSocket service — the web-app never reaches it directly, only through those two services' APIs.
  
 - Secret Manager: holds service credentials and the moderation service's configuration reference. (What that reference points to, and how it's produced, is out of scope here.)
  
@@ -44,11 +44,11 @@ Components:
  
 # 4. Data Flow — A Single Message
  
-- 1. User's turn is active (round-robin state held in Redis); client sends the message over HTTPS to the tRPC API (trpc.mincirklen.dk), not directly to the WebSocket service.
+- 1. User's turn is active (round-robin state held in the WebSocket service's Redis, read via its internal HTTP surface — never directly by the tRPC API); client sends the message over HTTPS to the tRPC API (trpc.mincirklen.dk), not directly to the WebSocket service.
  
 - 2. The tRPC API calls the Moderation Service over gRPC (private subnet) with the message, and waits for a pass/flag/crisis classification before doing anything else with it.
  
-- 3. If "pass": the tRPC API persists the message to Cloud SQL, updates round state in Redis, and hands the approved message off to the WebSocket layer for live delivery. The receiving WS pod publishes it to the room's NATS subject; every WS pod with a member of that room subscribed receives it and pushes it to its locally connected clients.
+- 3. If "pass": the tRPC API persists the message to Cloud SQL, then calls the WebSocket service's internal HTTP surface twice — once to hand the approved message off for live delivery, once to advance round state. The receiving WS pod does the corresponding Redis update itself and publishes the result to the room's NATS subjects (message and presence); every WS pod with a member of that room subscribed receives it and pushes it to its locally connected clients.
  
 - 4. If "flag" (non-crisis, e.g. solicitation/toxicity pattern): the message is held back from the room by the tRPC API, logged for human review, and the sender may be rate-limited or shadow-throttled per the roadmap's threat-model rules. It is never handed to the WebSocket layer for delivery.
  
@@ -59,11 +59,11 @@ Components:
 | **Component** | **Platform** | **Role** | **Scaling model** |
 | --- | --- | --- | --- |
 | tRPC API | Cloud Run | Auth, session mgmt, message ingestion, REST/RPC | Scale-to-zero, per-request |
-| WebSocket service | GKE Autopilot | Live delivery, round state, matchmaking | Horizontal, pod-level, spot-eligible |
-| NATS (JetStream) | GKE Autopilot | Cross-pod message fanout | Small fixed cluster, non-spot |
+| WebSocket service | GKE Autopilot | Live delivery, round state, presence/live-count | Horizontal, pod-level, spot-eligible |
+| NATS (core pub/sub) | GKE Autopilot | Cross-pod message + presence fanout, internal to the WebSocket service | Small fixed cluster, non-spot |
 | Moderation service | Cloud Run (private) | Per-message classification via gRPC | Scale-to-zero, per-request |
-| Redis | GKE Autopilot (self-hosted) or Memorystore | Shared matchmaking/room state (tRPC + WS + web-app) | Small, non-spot, AOF persistence |
-| Cloud SQL (Postgres) | Managed | Shared chat history, metadata, metrics (tRPC + WS + web-app) | Vertical, smallest viable tier at MVP |
+| Redis | GKE Autopilot (self-hosted) or Memorystore | WebSocket service's own shared round/roster/presence state — not reached by tRPC or web-app | Small, non-spot, AOF persistence |
+| Cloud SQL (Postgres) | Managed | Shared chat history, metadata, metrics (tRPC + WS) | Vertical, smallest viable tier at MVP |
 | Load Balancer | Managed | TLS, WS upgrade, routing | Managed, no scaling config needed |
  
 # 6. Network Architecture
@@ -92,7 +92,7 @@ The domain mincirklen.dk is managed in Cloud DNS. Network layout separates publi
  
 - Cloud NAT provides egress for the private subnet (e.g. outbound calls to an external model API) without assigning any inbound-reachable public IP to the services inside it.
  
-- Secret Manager access, and the shared Redis and Cloud SQL instances, are all reached over the private network / VPC peering — accessible to both the tRPC API and the WebSocket service, and none of them have public endpoints.
+- Secret Manager access and the Cloud SQL instance are reached over the private network / VPC peering, accessible to both the tRPC API and the WebSocket service; Redis is reached the same way but only by the WebSocket service, which is the only thing that ever connects to it. None of them have public endpoints.
  
 ## 6.3 Subnet summary
  
@@ -102,7 +102,7 @@ The domain mincirklen.dk is managed in Cloud DNS. Network layout separates publi
 | Private subnet | Moderation service, fine-tuning/training system | No — internal-only, no public DNS entry |
 | Cloud Run (API) | tRPC API | Yes — trpc.mincirklen.dk via Load Balancer only; direct Cloud Run URL ingress restricted |
 | Web-app hosting | Static/SPA frontend | Yes — mincirklen.dk (root domain) via the Load Balancer |
-| Shared data layer | Redis, Cloud SQL — reachable independently by the tRPC API, WebSocket service, and web-app | No — private network / VPC peering only |
+| Shared data layer | Cloud SQL — reachable independently by the tRPC API and WebSocket service; Redis — reachable only by the WebSocket service | No — private network / VPC peering only |
  
 # 7. Infrastructure as Code — Terraform
  

@@ -1,0 +1,156 @@
+{
+  "communityRules": {
+    "anonymity": {
+      "title": "Protect your anonymity",
+      "description": "Never share your full name, phone number, address, email, or other identifying details in a circle — yours or anyone else's."
+    },
+    "noAdvertising": {
+      "title": "No advertising or soliciting",
+      "description": "Don't promote a business, service, or product, and don't ask other users to pay for anything."
+    },
+    "noEndorsements": {
+      "title": "No endorsements or recommendations",
+      "description": "Don't recommend or endorse specific practitioners, treatments, or outside services. This isn't a referral space."
+    },
+    "supportDontDirect": {
+      "title": "Support, don't direct",
+      "description": "Share your own experience, not medical or legal advice. Listening is always enough."
+    },
+    "reportOrLeave": {
+      "title": "Report or leave anytime",
+      "description": "If something feels wrong, or you're in crisis, use Report or Crisis resources right away. Nobody has to explain why they left."
+    }
+  },
+  "guidelinesModal": {
+    "stepOf": "Step {{step}} of {{total}}",
+    "beforeYouJoin": "Before you join",
+    "nonNegotiable": "These rules are non-negotiable and apply to every circle. Breaking them can get a session ended or an account removed.",
+    "understandAnonymous": "I understand circles are anonymous by default",
+    "readAndAgreeToThePrefix": "I have read and agree to the",
+    "communityGuidelines": "community guidelines",
+    "and": "and",
+    "privacyPolicy": "privacy policy",
+    "agreeToThePrefix": "I agree to the",
+    "termsOfService": "terms of service",
+    "liabilityNote": "and accept that MinCirklen is not liable for advice or outcomes shared in a circle",
+    "back": "Back",
+    "continue": "Continue",
+    "next": "Next",
+    "saving": "Saving…",
+    "agreeAndContinue": "Agree and continue"
+  },
+  "member": {
+    "onlineNow": "{{name}} · online now"
+  },
+  "reportModal": {
+    "title": "Report this session",
+    "description": "Tell us what happened. Your report goes to a moderator and stays anonymous — nobody in the circle is notified.",
+    "whoIsThisAbout": "Who is this about?",
+    "selectAllThatApply": "(select all that apply)",
+    "nobodyElseJoined": "Nobody else has joined this session yet.",
+    "whatsGoingOn": "What's going on?",
+    "describePlaceholder": "Describe what happened...",
+    "cancel": "Cancel",
+    "submitted": "Report about {{about}} submitted — a moderator will review it.",
+    "submit": "Submit report"
+  },
+  "newSessionModal": {
+    "title": "New session",
+    "tabListLabel": "Join or start a circle",
+    "joinTab": "Join a circle",
+    "createTab": "Start a circle"
+  },
+  "accountModal": {
+    "profile": "Profile",
+    "profileUnavailable": "Your profile isn't available right now.",
+    "firstName": "First name",
+    "lastName": "Last name",
+    "country": "Country",
+    "countryPlaceholder": "Select your country",
+    "mobileNumber": "Mobile number",
+    "mobileHint": "Mobile number is used only for account safety — never shown in a circle.",
+    "stayAnonymous": "Stay anonymous in circles",
+    "stayAnonymousHint": "Other users see \"Anonymous,\" not your name",
+    "settings": "Settings",
+    "appearance": "Appearance",
+    "appearanceHint": "Switch between light and dark",
+    "privacyNote": "Your name and contact details are encrypted at rest and never shown to other members — circles only ever see an anonymous label unless you've chosen to show your name.",
+    "readFullPrivacyPolicy": "Read the full privacy policy",
+    "preferencesUnavailable": "Your preferences aren't available right now.",
+    "language": "Language",
+    "timezone": "Timezone",
+    "systemDefaultShort": "System default",
+    "systemDefault": "System default — {{zone}} ({{offset}})"
+  },
+  "status": {
+    "ended": "This session has ended",
+    "anonymousByDefault": "Anonymous by default",
+    "startsAt": "Starts {{time}} · anonymous by default"
+  },
+  "emptyState": {
+    "ended": "This session has ended. Transcripts are only visible to users during the live round.",
+    "forming": "This circle has not started yet. You will be notified when the round begins.",
+    "waitingForFirstMessage": "Waiting for the first message."
+  },
+  "sidebar": {
+    "liveNow": "Live now",
+    "ended": "Ended",
+    "notStarted": "Not started",
+    "account": "Account",
+    "newSession": "New session",
+    "searchSessions": "Search sessions",
+    "noSessionsMatch": "No sessions match that search",
+    "loadMore": "Load more"
+  },
+  "panel": {
+    "toggleMenu": "Toggle menu",
+    "showOfflineParticipants_one": "Show {{count}} offline participant",
+    "showOfflineParticipants_other": "Show {{count}} offline participants",
+    "notCurrentlyOnline": "Not currently online",
+    "userCount_one": "{{count}} user",
+    "userCount_other": "{{count}} users"
+  },
+  "composer": {
+    "newMessages_one": "{{count}} new message",
+    "newMessages_other": "{{count}} new messages",
+    "sendingIn": "Sending in {{count}}s",
+    "skippingIn": "Skipping in {{count}}s",
+    "keepTypingToPause": "keep typing to pause",
+    "placeholderYourTurn": "Share when it's your turn",
+    "placeholderWaiting": "Type your message — sends once the floor is yours",
+    "send": "Send",
+    "sendOptions": "Send options",
+    "autoSendToggle": "Auto-send when time runs out",
+    "sessionNotActive": "Session not active",
+    "itsYourTurn": "It's your turn",
+    "hasTheFloor": "{{name}} has the floor",
+    "waitingForNextUser": "Waiting for the next user"
+  },
+  "rightPanel": {
+    "essentialPages": "Essential pages",
+    "transparency": "Transparency",
+    "ifInCrisis": "If you're in crisis",
+    "crisisResources": "Crisis resources",
+    "reportThisSession": "Report this session"
+  },
+  "centerPanelError": {
+    "errorCode": "ERROR {{code}}",
+    "notFoundTitle": "Session not found",
+    "notFoundMessage": "That session doesn't exist, or it may have been removed.",
+    "fullTitle": "This circle is full",
+    "fullMessage": "This circle has already reached its capacity.",
+    "genericTitle": "Something went wrong",
+    "genericMessage": "We couldn't load this session right now. Please try again."
+  },
+  "errors": {
+    "agreementFailed": "Something went wrong recording your agreement. Please try again.",
+    "messageHeld": "Your message was held for review and was not sent to the circle.",
+    "sendFailed": "Something went wrong sending that message.",
+    "turnSkipped": "No response — your turn was skipped.",
+    "skipFailed": "Something went wrong skipping your turn.",
+    "recentSessionsLoadFailed": "Could not load recent sessions",
+    "moreRecentSessionsLoadFailed": "Could not load more sessions",
+    "sessionLoadFailed": "Could not load this session right now.",
+    "earlierMessagesLoadFailed": "Could not load earlier messages right now."
+  }
+}

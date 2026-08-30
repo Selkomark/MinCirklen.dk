@@ -1,0 +1,12 @@
+{
+  "errorCode": "FEJL {{code}}",
+  "backToHome": "Tilbage til forsiden",
+  "notFound": {
+    "title": "Siden blev ikke fundet",
+    "message": "Den side findes ikke, eller den kan være blevet flyttet."
+  },
+  "boundary": {
+    "title": "Der opstod en fejl",
+    "message": "Der opstod en uventet fejl. Prøv igen."
+  }
+}

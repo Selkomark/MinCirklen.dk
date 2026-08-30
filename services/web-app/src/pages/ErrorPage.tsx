@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { LinkButton } from '../LinkButton'
 import { SiteHeader } from '../SiteHeader'
 import { SiteFooter } from '../SiteFooter'
@@ -9,6 +10,7 @@ import { useDocumentTitle } from '../useDocumentTitle'
 // page for) — one layout, one recovery action, so a new error case is a
 // one-line call site rather than a new near-duplicate page file.
 export function ErrorPage({ code, title, message }: { code: number; title: string; message: string }) {
+  const { t } = useTranslation('errors')
   useDocumentTitle(`${title} — MinCirklen`)
 
   return (
@@ -26,7 +28,7 @@ export function ErrorPage({ code, title, message }: { code: number; title: strin
         <div style={{ width: '100%', maxWidth: 440, display: 'flex', flexDirection: 'column', gap: 'clamp(20px, 4vw, 28px)', textAlign: 'center' }}>
           <div>
             <div style={{ fontSize: 'var(--font-size-sm)', fontWeight: 'var(--font-weight-bold)', color: 'var(--text-secondary)', letterSpacing: '0.04em' }}>
-              ERROR {code}
+              {t('errorCode', { code })}
             </div>
             <div style={{ fontSize: 'var(--font-size-xl)', fontWeight: 'var(--font-weight-bold)', color: 'var(--text-primary)', marginTop: 4 }}>
               {title}
@@ -35,7 +37,7 @@ export function ErrorPage({ code, title, message }: { code: number; title: strin
           </div>
 
           <div>
-            <LinkButton href={landingPath()}>Back to home</LinkButton>
+            <LinkButton href={landingPath()}>{t('backToHome')}</LinkButton>
           </div>
         </div>
       </div>

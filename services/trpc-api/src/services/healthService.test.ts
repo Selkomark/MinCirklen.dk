@@ -5,14 +5,14 @@ describe('getHealth', () => {
   test('reports ok for every check that resolves', async () => {
     const result = await getHealth({
       pingDatabase: async () => {},
-      pingRedis: async () => {},
+      checkWebsocketService: async () => {},
       checkModerationService: async () => {},
     })
 
     expect(result).toEqual({
       service: 'trpc-api',
       postgres: 'ok',
-      redis: 'ok',
+      websocketService: 'ok',
       moderationService: 'ok',
     })
   })
@@ -22,7 +22,7 @@ describe('getHealth', () => {
       pingDatabase: async () => {
         throw new Error('connection refused')
       },
-      pingRedis: async () => {},
+      checkWebsocketService: async () => {},
       checkModerationService: async () => {
         throw new Error('status 503')
       },
@@ -31,7 +31,7 @@ describe('getHealth', () => {
     expect(result).toEqual({
       service: 'trpc-api',
       postgres: 'unreachable: connection refused',
-      redis: 'ok',
+      websocketService: 'ok',
       moderationService: 'unreachable: status 503',
     })
   })

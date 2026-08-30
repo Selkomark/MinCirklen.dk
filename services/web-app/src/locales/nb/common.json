@@ -1,0 +1,21 @@
+{
+  "toggleTheme": "Bytt tema",
+  "nav": {
+    "preferences": "Preferanser",
+    "profile": "Profil",
+    "settings": "Innstillinger",
+    "privacy": "Personvern og data",
+    "logOut": "Logg ut"
+  },
+  "account": {
+    "title": "Konto"
+  },
+  "actions": {
+    "saveChanges": "Lagre endringer",
+    "saved": "Lagret."
+  },
+  "errors": {
+    "saveFailed": "Noe gikk galt da endringene dine skulle lagres.",
+    "logoutFailed": "Noe gikk galt under utlogging."
+  }
+}

@@ -12,7 +12,9 @@
   "dependencies": {
     "@mincirklen/shared": "workspace:*",
     "hono": "^4.6.0",
+    "ioredis": "^5.4.1",
     "kysely": "^0.28.0",
+    "msgpackr": "^2.1.0",
     "nats": "^2.29.1"
   },
   "devDependencies": {

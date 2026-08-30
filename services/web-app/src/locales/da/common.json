@@ -1,0 +1,21 @@
+{
+  "toggleTheme": "Skift tema",
+  "nav": {
+    "preferences": "Præferencer",
+    "profile": "Profil",
+    "settings": "Indstillinger",
+    "privacy": "Privatliv og data",
+    "logOut": "Log ud"
+  },
+  "account": {
+    "title": "Konto"
+  },
+  "actions": {
+    "saveChanges": "Gem ændringer",
+    "saved": "Gemt."
+  },
+  "errors": {
+    "saveFailed": "Der opstod en fejl, da dine ændringer skulle gemmes.",
+    "logoutFailed": "Der opstod en fejl under log ud."
+  }
+}

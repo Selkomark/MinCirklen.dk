@@ -1,0 +1,12 @@
+{
+  "errorCode": "ERROR {{code}}",
+  "backToHome": "Back to home",
+  "notFound": {
+    "title": "Page not found",
+    "message": "That page doesn't exist, or it may have moved."
+  },
+  "boundary": {
+    "title": "Something went wrong",
+    "message": "An unexpected error occurred. Please try again."
+  }
+}

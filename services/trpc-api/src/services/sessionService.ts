@@ -1,4 +1,11 @@
-import type { ListOpenSessionsResult, RosterEntry, SessionState } from '../repositories/sessionRepository'
+import type {
+  GuidelinesCheckResult,
+  ListOpenSessionsResult,
+  ListRecentVisitsResult,
+  RosterEntry,
+  SessionState,
+  SessionSummary,
+} from '../repositories/sessionRepository'
 
 export interface CreateSessionDeps {
   createSession(): Promise<{ id: string }>
@@ -24,10 +31,88 @@ export async function joinSession(deps: JoinSessionDeps): Promise<RosterEntry> {
   return deps.joinSession()
 }
 
+// Composes two independent reads: session lifecycle status (still
+// Postgres's own concern) and live turn/roster state (Redis, via
+// websocket-service — see adapters/websocketServiceAdapter.ts's
+// getTurnState). Only reads the live state once the session is confirmed
+// to still exist, so a deleted/never-existed session is a clean null
+// rather than a websocket-service round trip that would 404 anyway.
 export interface GetSessionStateDeps {
-  getSessionState(): Promise<SessionState | null>
+  getSessionStatus(): Promise<{ id: string; status: SessionState['status'] } | null>
+  getTurnState(): Promise<{ currentTurnUserId: string | null; roster: RosterEntry[]; onlineUserIds: string[] }>
 }
 
 export async function getSessionState(deps: GetSessionStateDeps): Promise<SessionState | null> {
-  return deps.getSessionState()
+  const statusInfo = await deps.getSessionStatus()
+  if (!statusInfo) return null
+
+  const turnState = await deps.getTurnState()
+  return { ...statusInfo, ...turnState }
+}
+
+// Read-only existence check — no join, no last_visited_at touch. Used
+// before the community-guidelines gate (DashboardPage.tsx): a user who
+// hasn't agreed yet must not be silently joined to a session just by
+// having its URL open, and confirming the session is even real before
+// asking them to click through the guidelines saves them the trip if
+// it's a dead link. See visitSession below for the join-and-record step
+// that runs once guidelines are cleared.
+export interface GetSessionSummaryDeps {
+  getSessionSummary(): Promise<SessionSummary | null>
+}
+
+export async function getSessionSummary(deps: GetSessionSummaryDeps): Promise<SessionSummary | null> {
+  return deps.getSessionSummary()
+}
+
+// "Visiting" /s/:sessionId is joining (see sessionRepository.ts's
+// joinSession) — idempotent for an existing member, so this both
+// validates the session exists (joinSession throws SessionNotFoundError
+// otherwise) and grants/refreshes real access to getState/listMessages/
+// sendMessage, which stay membership-gated. getSessionSummary is a
+// second call because joinSession's own return (just a RosterEntry) has
+// no display info — the session is guaranteed to exist at that point
+// (joinSession would already have thrown), so a null summary here would
+// mean the two calls disagreed about that, not a normal "not found".
+export interface VisitSessionDeps {
+  joinSession(): Promise<RosterEntry>
+  getSessionSummary(): Promise<SessionSummary | null>
+}
+
+export async function visitSession(deps: VisitSessionDeps): Promise<SessionSummary> {
+  await deps.joinSession()
+  const summary = await deps.getSessionSummary()
+  return summary!
+}
+
+export interface ListRecentVisitsDeps {
+  listRecentSessionVisits(): Promise<ListRecentVisitsResult>
+}
+
+export async function listRecentVisits(deps: ListRecentVisitsDeps): Promise<ListRecentVisitsResult> {
+  return deps.listRecentSessionVisits()
+}
+
+// Called once a user has already joined (visitSession above) — the
+// community-guidelines gate (DashboardPage.tsx's CommunityGuidelinesModal)
+// lives per-session-membership-row now, not per-user. A thin passthrough:
+// the repository does the actual union-across-sessions/sync work (see
+// checkAndSyncGuidelines) so a user who agreed to an older set of
+// required keys sees exactly the ones they've covered pre-checked, not
+// a blunt "start over" — including when a new key gets added later.
+export interface CheckGuidelinesDeps {
+  checkAndSyncGuidelines(): Promise<GuidelinesCheckResult>
+}
+
+export async function checkGuidelines(deps: CheckGuidelinesDeps): Promise<GuidelinesCheckResult> {
+  return deps.checkAndSyncGuidelines()
+}
+
+export interface RecordGuidelinesAgreementDeps {
+  recordGuidelinesAgreement(): Promise<void>
+}
+
+export async function recordGuidelinesAgreement(deps: RecordGuidelinesAgreementDeps): Promise<{ agreed: true }> {
+  await deps.recordGuidelinesAgreement()
+  return { agreed: true }
 }

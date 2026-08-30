@@ -1,7 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { DEFAULT_LOCAL_DATABASE_URL, createDb, createPgPool, runMigrations } from '@mincirklen/shared'
-import type { Redis } from 'ioredis'
-import type { NatsConnection } from 'nats'
 import { createApp } from './app'
 import { linkIdentity } from './repositories/userIdentityRepository'
 
@@ -15,10 +13,10 @@ await runMigrations(db, 'test')
 
 const app = createApp({
   db,
-  redis: {} as Redis, // not exercised by the auth flow under test
-  nats: {} as NatsConnection, // not exercised by the auth flow under test
   authSecret: 'integration-test-secret',
   moderationServiceUrl: 'http://unused.invalid',
+  websocketServiceUrl: 'http://unused.invalid',
+  internalServiceSecret: 'app-integration-test-internal-secret',
   publicBaseUrl: 'https://dev-mincirklen.dk',
   vault: {
     provider: 'vault',
@@ -52,6 +50,14 @@ describe('auth flow through the Hono app', () => {
 
     const cookie = extractCookie(res)
     expect(cookie.startsWith('mc_session=')).toBe(true)
+
+    // Domain must be present (and scoped to the app's own base host, not a
+    // wildcard) so the browser also sends this cookie on a WebSocket
+    // handshake to a sibling subdomain like socket.dev-mincirklen.dk —
+    // without it the cookie is host-only to dev-mincirklen.dk and never
+    // reaches websocket-service at all. See publicBaseUrl above.
+    const setCookie = res.headers.get('set-cookie')
+    expect(setCookie).toContain('Domain=dev-mincirklen.dk')
   })
 
   test('whoAmI succeeds with the issued cookie and fails without it', async () => {
@@ -91,6 +97,10 @@ describe('auth flow through the Hono app', () => {
     const sessionCookieHeader = res.headers.getSetCookie().find((c) => c.startsWith('mc_session='))
     expect(sessionCookieHeader).toBeDefined()
     expect(sessionCookieHeader).toContain('Max-Age=0')
+    // The clearing cookie must carry the same Domain as the one that set
+    // it — a browser matches a cookie to clear by name+domain+path, so a
+    // mismatched Domain here would silently fail to clear it.
+    expect(sessionCookieHeader).toContain('Domain=dev-mincirklen.dk')
 
     const withoutSession = await app.request('/trpc/auth.logout', {
       method: 'POST',

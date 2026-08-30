@@ -32,11 +32,18 @@ export interface SendMessageDeps {
   classify(body: string): Promise<Classification>
   // Each of these three maps 1:1 to a single atomic Repository/Service call
   // the controller wires up — see services/trpc-api/src/repositories/messageRepository.ts
-  // for how the 'pass'/'flag' cases stay transactional across tables.
+  // for how the 'pass'/'flag' cases persist the message/moderation event.
   recordPassedMessage(body: string): Promise<MessageRow>
   recordFlaggedMessage(): Promise<void>
   escalateCrisis(): Promise<CrisisResource>
   publish(message: MessageRow): void
+  // Turn advancement is now owned by websocket-service (Redis is the live
+  // authority — see adapters/websocketServiceAdapter.ts), no longer part
+  // of recordPassedMessage/recordFlaggedMessage's own transaction. Called
+  // explicitly below for exactly the same two cases that always advanced
+  // the turn before: a passed message, and a non-crisis flag. A crisis
+  // still never advances it — see the case below.
+  advanceTurn(): Promise<void>
 }
 
 export async function sendMessage(deps: SendMessageDeps, body: string): Promise<SendMessageResult> {
@@ -60,10 +67,12 @@ export async function sendMessage(deps: SendMessageDeps, body: string): Promise<
     case 'pass': {
       const message = await deps.recordPassedMessage(body)
       deps.publish(message)
+      await deps.advanceTurn()
       return { status: 'sent', message }
     }
     case 'flag': {
       await deps.recordFlaggedMessage()
+      await deps.advanceTurn()
       return { status: 'held' }
     }
     case 'crisis': {
@@ -83,4 +92,26 @@ export async function sendMessage(deps: SendMessageDeps, body: string): Promise<
       throw new Error(`unexpected classification: ${JSON.stringify(unreachable)}`)
     }
   }
+}
+
+export interface SkipTurnDeps {
+  isSessionMember(): Promise<boolean>
+  claimTurn(): Promise<void>
+  advanceTurn(): Promise<void>
+}
+
+// The client-side inactivity countdown's "auto-skip" outcome (see
+// dashboardShared.tsx's useTurnCountdown) — the turn holder let a full
+// countdown pass with nothing drafted, so their turn is forfeited and
+// passed to the next (online) member, exactly like a sent message would
+// advance it, but with no message persisted and no moderation call.
+// claimTurn() alone is what makes this safe to expose as its own
+// mutation: only the genuine current turn holder can ever successfully
+// call it, same guarantee sendMessage relies on.
+export async function skipTurn(deps: SkipTurnDeps): Promise<void> {
+  if (!(await deps.isSessionMember())) {
+    throw new NotAMemberError('user is not a member of this session')
+  }
+  await deps.claimTurn()
+  await deps.advanceTurn()
 }

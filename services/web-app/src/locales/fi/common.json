@@ -1,0 +1,21 @@
+{
+  "toggleTheme": "Vaihda teema",
+  "nav": {
+    "preferences": "Omat asetukset",
+    "profile": "Profiili",
+    "settings": "Asetukset",
+    "privacy": "Tietosuoja ja tiedot",
+    "logOut": "Kirjaudu ulos"
+  },
+  "account": {
+    "title": "Tili"
+  },
+  "actions": {
+    "saveChanges": "Tallenna muutokset",
+    "saved": "Tallennettu."
+  },
+  "errors": {
+    "saveFailed": "Muutosten tallentamisessa tapahtui virhe.",
+    "logoutFailed": "Uloskirjautumisessa tapahtui virhe."
+  }
+}

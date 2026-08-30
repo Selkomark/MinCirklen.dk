@@ -12,6 +12,8 @@ export interface UserProfileRow {
   stayAnonymous: boolean
   termsAcceptedAt: Date
   createdAt: Date
+  language: string | null
+  timezone: string | null
 }
 
 // The only shape ever encrypted/decrypted as a unit — see
@@ -36,6 +38,13 @@ export async function upsertUserProfile(
     mobileNumber: string
     stayAnonymous: boolean
     termsAcceptedAt: Date
+    // Optional for callers that never touch preferences (e.g. tests) —
+    // undefined normalizes to null below. This is a full-replace upsert
+    // like every other field here (see the doc comment above), so any
+    // caller editing just Profile or just Preferences must still resend
+    // the other section's current values, or it gets nulled out too.
+    language?: string | null
+    timezone?: string | null
   },
 ): Promise<UserProfileRow> {
   const pii: EncryptedPii = {
@@ -44,6 +53,8 @@ export async function upsertUserProfile(
     mobileNumber: params.mobileNumber,
   }
   const piiCiphertext = await encryptField(kms, JSON.stringify(pii))
+  const language = params.language ?? null
+  const timezone = params.timezone ?? null
 
   const row = await db
     .insertInto('user_profiles')
@@ -53,6 +64,8 @@ export async function upsertUserProfile(
       country: params.country,
       stay_anonymous: params.stayAnonymous,
       terms_accepted_at: params.termsAcceptedAt,
+      language,
+      timezone,
     })
     .onConflict((oc) =>
       oc.column('user_id').doUpdateSet({
@@ -60,6 +73,8 @@ export async function upsertUserProfile(
         country: params.country,
         stay_anonymous: params.stayAnonymous,
         terms_accepted_at: params.termsAcceptedAt,
+        language,
+        timezone,
       }),
     )
     .returningAll()
@@ -77,6 +92,8 @@ export async function upsertUserProfile(
     stayAnonymous: row.stay_anonymous,
     termsAcceptedAt: row.terms_accepted_at,
     createdAt: row.created_at,
+    language: row.language,
+    timezone: row.timezone,
   }
 }
 
@@ -112,5 +129,7 @@ export async function findUserProfileByUserId(
     stayAnonymous: row.stay_anonymous,
     termsAcceptedAt: row.terms_accepted_at,
     createdAt: row.created_at,
+    language: row.language,
+    timezone: row.timezone,
   }
 }

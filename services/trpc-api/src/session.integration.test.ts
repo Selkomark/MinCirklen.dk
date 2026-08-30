@@ -1,7 +1,6 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test'
 import { DEFAULT_LOCAL_DATABASE_URL, createDb, createPgPool, runMigrations } from '@mincirklen/shared'
-import type { Redis } from 'ioredis'
-import { connect, type NatsConnection } from 'nats'
+import { sql } from 'kysely'
 import { createApp } from './app'
 import { linkIdentity } from './repositories/userIdentityRepository'
 import { upsertUserProfile } from './repositories/userProfileRepository'
@@ -16,15 +15,84 @@ const VAULT = {
   vaultAddr: process.env.TEST_VAULT_ADDR ?? 'http://localhost:8200',
   vaultToken: process.env.TEST_VAULT_TOKEN ?? 'dev-only-not-for-production',
 }
+const INTERNAL_SERVICE_SECRET = 'session-integration-test-internal-secret'
 
-let nats: NatsConnection
 let fakeModerationService: ReturnType<typeof Bun.serve>
+let fakeWebsocketService: ReturnType<typeof Bun.serve>
 let app: ReturnType<typeof createApp>
+
+// Captured requests to the fake websocket-service's publish route — reset
+// between tests so one test's fanout can't be mistaken for another's.
+let publishedRequests: { sessionId: string; secretHeader: string | null; body: unknown }[] = []
+
+// Captured calls to the fake websocket-service's roster/join route —
+// used to prove join/visit only fan out a live "joined" notification for
+// a genuinely new member, never for a revisit (see sessionRouter.ts's
+// isNewJoin check).
+let joinNotifications: { sessionId: string; userId: string }[] = []
+
+// In-memory turn/roster state for the fake websocket-service — see the
+// route handlers below. Reset between tests for the same reason as
+// publishedRequests.
+interface FakeTurnState {
+  currentTurnUserId: string | null
+  turnClaimedAt: number | null
+  roster: { userId: string; turnOrder: number }[]
+}
+let fakeTurnStates = new Map<string, FakeTurnState>()
+
+afterEach(() => {
+  publishedRequests = []
+  joinNotifications = []
+  fakeTurnStates = new Map()
+})
+
+// Seeds from Postgres exactly once per session (mirrors
+// websocket-service's own seed-on-first-touch behavior) — null means the
+// session doesn't exist in Postgres either.
+async function seedFakeTurnStateIfMissing(sessionId: string): Promise<FakeTurnState | null> {
+  const existing = fakeTurnStates.get(sessionId)
+  if (existing) return existing
+
+  const session = await db.selectFrom('sessions').select('current_turn_user_id').where('id', '=', sessionId).executeTakeFirst()
+  if (!session) return null
+
+  const rows = await db
+    .selectFrom('session_users')
+    .select(['user_id', 'turn_order'])
+    .where('session_id', '=', sessionId)
+    .orderBy('turn_order', 'asc')
+    .execute()
+  const roster = rows.filter((r) => r.turn_order !== null).map((r) => ({ userId: r.user_id, turnOrder: r.turn_order as number }))
+
+  const state: FakeTurnState = { currentTurnUserId: session.current_turn_user_id, turnClaimedAt: null, roster }
+  fakeTurnStates.set(sessionId, state)
+  return state
+}
+
+// sendMessage's publish to websocket-service is deliberately fire-and-forget
+// (see websocketServiceAdapter.ts's publishMessage comment) — it isn't
+// awaited into the sendMessage response, so a test asserting on it has to
+// poll briefly rather than assume it's already landed the instant the
+// response comes back.
+async function waitForPublish(count: number): Promise<void> {
+  for (let i = 0; i < 50 && publishedRequests.length < count; i++) {
+    await new Promise((r) => setTimeout(r, 10))
+  }
+}
+
+// notifyJoinedFireAndForget (sessionRouter.ts) is, as the name says,
+// fire-and-forget — a join/visit call can return before its own
+// notification has actually landed on the fake websocket-service. Same
+// rationale as waitForPublish above.
+async function waitForJoinNotification(count: number): Promise<void> {
+  for (let i = 0; i < 50 && joinNotifications.length < count; i++) {
+    await new Promise((r) => setTimeout(r, 10))
+  }
+}
 
 beforeAll(async () => {
   await runMigrations(db, 'test')
-
-  nats = await connect({ servers: process.env.NATS_URL ?? 'nats://localhost:4222' })
 
   // The real moderation-service is intentionally not published to the host
   // (see docs/local_dev.md), and it only ever returns 'pass' anyway — this
@@ -49,12 +117,98 @@ beforeAll(async () => {
     },
   })
 
+  // Stands in for websocket-service's whole /internal/* surface —
+  // exercises sessionRouter.ts's real HTTP calls (websocketServiceAdapter.ts)
+  // rather than mocking them away, same rationale as fakeModerationService
+  // above. The turn/roster routes are a minimal in-memory simulation, not
+  // a reimplementation of the real Redis/Lua compare-and-swap logic —
+  // that's exhaustively covered in websocket-service's own suite
+  // (redisTurnStateAdapter.integration.test.ts,
+  // internalController.integration.test.ts). This only needs to behave
+  // correctly enough for trpc-api's own wiring to be exercised end to end.
+  fakeWebsocketService = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const url = new URL(req.url)
+
+      const publishMatch = url.pathname.match(/^\/internal\/rooms\/([^/]+)\/publish$/)
+      if (publishMatch) {
+        const body = await req.json()
+        publishedRequests.push({
+          sessionId: publishMatch[1] as string,
+          secretHeader: req.headers.get('x-internal-secret'),
+          body,
+        })
+        return new Response(null, { status: 204 })
+      }
+
+      const turnMatch = url.pathname.match(/^\/internal\/sessions\/([^/]+)\/turn$/)
+      if (turnMatch && req.method === 'GET') {
+        const sessionId = turnMatch[1] as string
+        const state = await seedFakeTurnStateIfMissing(sessionId)
+        if (!state) return new Response('not found', { status: 404 })
+        // This fake never simulates live presence (that's exhaustively
+        // covered in websocket-service's own suite — see this block's
+        // doc comment) — always empty, never omitted, so trpc-api's own
+        // wiring for the field is still exercised end to end.
+        return Response.json({ currentTurnUserId: state.currentTurnUserId, roster: state.roster, onlineUserIds: [] })
+      }
+
+      const joinMatch = url.pathname.match(/^\/internal\/sessions\/([^/]+)\/roster\/join$/)
+      if (joinMatch && req.method === 'POST') {
+        const sessionId = joinMatch[1] as string
+        const { userId, turnOrder } = (await req.json()) as { userId: string; turnOrder: number }
+        joinNotifications.push({ sessionId, userId })
+        const state = await seedFakeTurnStateIfMissing(sessionId)
+        if (!state) return new Response('not found', { status: 404 })
+        if (!state.roster.some((r) => r.userId === userId)) {
+          state.roster.push({ userId, turnOrder })
+        }
+        return new Response(null, { status: 204 })
+      }
+
+      const claimMatch = url.pathname.match(/^\/internal\/sessions\/([^/]+)\/turn\/claim$/)
+      if (claimMatch && req.method === 'POST') {
+        const sessionId = claimMatch[1] as string
+        const { userId } = (await req.json()) as { userId: string }
+        const state = fakeTurnStates.get(sessionId)
+        if (!state) return new Response('not found', { status: 404 })
+        if (state.currentTurnUserId !== userId) return new Response('forbidden', { status: 403 })
+        if (state.turnClaimedAt !== null && Date.now() - state.turnClaimedAt < 15000) {
+          return new Response('conflict', { status: 409 })
+        }
+        state.turnClaimedAt = Date.now()
+        return new Response(null, { status: 204 })
+      }
+
+      const releaseMatch = url.pathname.match(/^\/internal\/sessions\/([^/]+)\/turn\/release$/)
+      if (releaseMatch && req.method === 'POST') {
+        const state = fakeTurnStates.get(releaseMatch[1] as string)
+        if (state) state.turnClaimedAt = null
+        return new Response(null, { status: 204 })
+      }
+
+      const advanceMatch = url.pathname.match(/^\/internal\/sessions\/([^/]+)\/turn\/advance$/)
+      if (advanceMatch && req.method === 'POST') {
+        const state = fakeTurnStates.get(advanceMatch[1] as string)
+        if (!state || state.roster.length === 0) return Response.json({ currentTurnUserId: null })
+        const currentIndex = state.roster.findIndex((r) => r.userId === state.currentTurnUserId)
+        const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % state.roster.length
+        state.currentTurnUserId = state.roster[nextIndex]?.userId ?? null
+        state.turnClaimedAt = null
+        return Response.json({ currentTurnUserId: state.currentTurnUserId })
+      }
+
+      return new Response('not found', { status: 404 })
+    },
+  })
+
   app = createApp({
     db,
-    redis: {} as Redis, // not exercised by the session/message flow under test
-    nats,
     authSecret: 'session-integration-test-secret',
     moderationServiceUrl: `http://localhost:${fakeModerationService.port}`,
+    websocketServiceUrl: `http://localhost:${fakeWebsocketService.port}`,
+    internalServiceSecret: INTERNAL_SERVICE_SECRET,
     publicBaseUrl: 'https://dev-mincirklen.dk',
     vault: VAULT,
     identityHashKey: 'session-integration-test-identity-hash-key',
@@ -63,7 +217,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   fakeModerationService.stop()
-  await nats.close()
+  fakeWebsocketService.stop()
   await db.destroy()
 })
 
@@ -156,7 +310,7 @@ describe('verifiedProcedure gate on session.*', () => {
 })
 
 describe('session + message pipeline', () => {
-  test('create, join, send in turn order, and fan out to NATS', async () => {
+  test('create, join, send in turn order, and fan out to websocket-service', async () => {
     const alice = await createActor()
     const bob = await createActor()
 
@@ -189,6 +343,12 @@ describe('session + message pipeline', () => {
     const { result: sent } = (await aliceSends.json()) as { result: { data: { status: string } } }
     expect(sent.data.status).toBe('sent')
 
+    await waitForPublish(1)
+    expect(publishedRequests).toHaveLength(1)
+    expect(publishedRequests[0]?.sessionId).toBe(sessionId)
+    expect(publishedRequests[0]?.secretHeader).toBe(INTERNAL_SERVICE_SECRET)
+    expect(publishedRequests[0]?.body).toMatchObject({ sessionId, userId: alice.userId, body: 'hello room' })
+
     const afterState = await query(alice, 'session.getState', { sessionId })
     const { result: afterData } = (await afterState.json()) as {
       result: { data: { currentTurnUserId: string } }
@@ -196,12 +356,57 @@ describe('session + message pipeline', () => {
     expect(afterData.data.currentTurnUserId).toBe(bob.userId)
 
     const messagesRes = await query(alice, 'session.listMessages', { sessionId })
-    const { result: messages } = (await messagesRes.json()) as { result: { data: { body: string }[] } }
-    expect(messages.data.map((m) => m.body)).toEqual(['hello room'])
+    const { result: messages } = (await messagesRes.json()) as { result: { data: { messages: { body: string }[] } } }
+    expect(messages.data.messages.map((m) => m.body)).toEqual(['hello room'])
 
     // Alice's turn has passed — sending again is rejected.
     const aliceSendsAgain = await call(alice, 'session.sendMessage', { sessionId, body: 'again' })
     expect(aliceSendsAgain.status).toBe(403)
+  })
+
+  test('skipTurn forfeits the turn without persisting anything, and only the actual holder can call it', async () => {
+    const alice = await createActor()
+    const bob = await createActor()
+
+    const createRes = await call(alice, 'session.create', {})
+    const { result: created } = (await createRes.json()) as { result: { data: { id: string } } }
+    const sessionId = created.data.id
+    await call(alice, 'session.join', { sessionId })
+    await call(bob, 'session.join', { sessionId })
+
+    // Bob doesn't hold the turn yet — rejected, same guarantee as sendMessage.
+    const bobTriesEarly = await call(bob, 'session.skipTurn', { sessionId })
+    expect(bobTriesEarly.status).toBe(403)
+
+    const aliceSkips = await call(alice, 'session.skipTurn', { sessionId })
+    expect(aliceSkips.status).toBe(200)
+    const { result: skipped } = (await aliceSkips.json()) as { result: { data: { status: string } } }
+    expect(skipped.data.status).toBe('skipped')
+
+    const stateRes = await query(alice, 'session.getState', { sessionId })
+    const { result: state } = (await stateRes.json()) as { result: { data: { currentTurnUserId: string } } }
+    expect(state.data.currentTurnUserId).toBe(bob.userId)
+
+    // No message published, none persisted — a skip is silent.
+    expect(publishedRequests).toHaveLength(0)
+    const messagesRes = await query(alice, 'session.listMessages', { sessionId })
+    const { result: messages } = (await messagesRes.json()) as { result: { data: { messages: unknown[] } } }
+    expect(messages.data.messages).toEqual([])
+
+    // Alice's turn already passed — skipping again is rejected.
+    const aliceSkipsAgain = await call(alice, 'session.skipTurn', { sessionId })
+    expect(aliceSkipsAgain.status).toBe(403)
+  })
+
+  test('rejects a non-member trying to skip', async () => {
+    const alice = await createActor()
+    const outsider = await createActor()
+
+    const createRes = await call(alice, 'session.create', {})
+    const { result: created } = (await createRes.json()) as { result: { data: { id: string } } }
+
+    const res = await call(outsider, 'session.skipTurn', { sessionId: created.data.id })
+    expect(res.status).toBe(403)
   })
 
   test('rejects a non-member trying to send', async () => {
@@ -240,6 +445,35 @@ describe('session + message pipeline', () => {
     expect(memberMessages.status).toBe(200)
   })
 
+  test('listMessages paginates with cursor/limit, oldest-first within each page', async () => {
+    const alice = await createActor()
+    const bob = await createActor()
+
+    const createRes = await call(alice, 'session.create', {})
+    const { result: created } = (await createRes.json()) as { result: { data: { id: string } } }
+    const sessionId = created.data.id
+    await call(alice, 'session.join', { sessionId })
+    await call(bob, 'session.join', { sessionId })
+
+    await call(alice, 'session.sendMessage', { sessionId, body: 'first' })
+    await call(bob, 'session.sendMessage', { sessionId, body: 'second' })
+    await call(alice, 'session.sendMessage', { sessionId, body: 'third' })
+
+    const firstPageRes = await query(alice, 'session.listMessages', { sessionId, limit: 2 })
+    const { result: firstPage } = (await firstPageRes.json()) as {
+      result: { data: { messages: { body: string }[]; nextCursor: string | null } }
+    }
+    expect(firstPage.data.messages.map((m) => m.body)).toEqual(['second', 'third'])
+    expect(firstPage.data.nextCursor).not.toBeNull()
+
+    const secondPageRes = await query(alice, 'session.listMessages', { sessionId, limit: 2, cursor: firstPage.data.nextCursor })
+    const { result: secondPage } = (await secondPageRes.json()) as {
+      result: { data: { messages: { body: string }[]; nextCursor: string | null } }
+    }
+    expect(secondPage.data.messages.map((m) => m.body)).toEqual(['first'])
+    expect(secondPage.data.nextCursor).toBeNull()
+  })
+
   test('"flag": holds the message back but still advances the turn', async () => {
     const alice = await createActor()
     const bob = await createActor()
@@ -256,8 +490,8 @@ describe('session + message pipeline', () => {
     expect(result.data.status).toBe('held')
 
     const messagesRes = await query(alice, 'session.listMessages', { sessionId })
-    const { result: messages } = (await messagesRes.json()) as { result: { data: unknown[] } }
-    expect(messages.data).toHaveLength(0)
+    const { result: messages } = (await messagesRes.json()) as { result: { data: { messages: unknown[] } } }
+    expect(messages.data.messages).toHaveLength(0)
 
     const stateRes = await query(alice, 'session.getState', { sessionId })
     const { result: state } = (await stateRes.json()) as { result: { data: { currentTurnUserId: string } } }
@@ -461,5 +695,231 @@ describe('scheduled circles (/start/new, /start/join)', () => {
       capacity: 6,
     })
     expect(res.status).toBe(400)
+  })
+})
+
+describe('session.visit / session.listRecentVisits', () => {
+  async function griefTopicId(actor: Actor): Promise<string> {
+    const res = await query(actor, 'topics.list', {})
+    const { result } = (await res.json()) as { result: { data: { id: string; slug: string }[] } }
+    return result.data.find((t) => t.slug === 'grief')!.id
+  }
+
+  async function createNamed(actor: Actor, topicId: string, name: string): Promise<string> {
+    const res = await call(actor, 'session.create', {
+      topicId,
+      name,
+      scheduledAt: new Date().toISOString(),
+      durationMinutes: 30,
+      capacity: 6,
+    })
+    const { result } = (await res.json()) as { result: { data: { id: string } } }
+    return result.data.id
+  }
+
+  test('visiting a session the actor never explicitly joined auto-joins them (DashboardPage.tsx\'s "observe any session" path)', async () => {
+    const alice = await createActor()
+    const bob = await createActor()
+
+    const createRes = await call(alice, 'session.create', {})
+    const { result: created } = (await createRes.json()) as { result: { data: { id: string } } }
+    const sessionId = created.data.id
+    await call(alice, 'session.join', { sessionId })
+
+    // Bob never called session.join — visiting is what grants him access.
+    const visitRes = await call(bob, 'session.visit', { sessionId })
+    expect(visitRes.status).toBe(200)
+    const { result } = (await visitRes.json()) as { result: { data: { id: string } } }
+    expect(result.data.id).toBe(sessionId)
+
+    // getState/listMessages stay membership-gated exactly as before —
+    // this only passes because visiting joined him.
+    const stateRes = await query(bob, 'session.getState', { sessionId })
+    expect(stateRes.status).toBe(200)
+  })
+
+  test('visiting a session that does not exist is a 404, not a crash', async () => {
+    const alice = await createActor()
+    const res = await call(alice, 'session.visit', { sessionId: '00000000-0000-0000-0000-000000000000' })
+    expect(res.status).toBe(404)
+  })
+
+  test('revisiting an already-visited session bumps it to the top of listRecentVisits', async () => {
+    const alice = await createActor()
+    const topicId = await griefTopicId(alice)
+    const firstId = await createNamed(alice, topicId, 'First circle')
+    const secondId = await createNamed(alice, topicId, 'Second circle')
+
+    await call(alice, 'session.visit', { sessionId: firstId })
+    await call(alice, 'session.visit', { sessionId: secondId })
+
+    const before = await query(alice, 'session.listRecentVisits', { limit: 10 })
+    const { result: beforeResult } = (await before.json()) as { result: { data: { visits: { id: string }[] } } }
+    expect(beforeResult.data.visits.map((v) => v.id)).toEqual([secondId, firstId])
+
+    await call(alice, 'session.visit', { sessionId: firstId }) // revisit
+
+    const after = await query(alice, 'session.listRecentVisits', { limit: 10 })
+    const { result: afterResult } = (await after.json()) as { result: { data: { visits: { id: string }[] } } }
+    expect(afterResult.data.visits.map((v) => v.id)).toEqual([firstId, secondId])
+  })
+
+  test('revisiting a session does not re-announce a live join to other members', async () => {
+    const alice = await createActor()
+    const bob = await createActor()
+
+    const createRes = await call(alice, 'session.create', {})
+    const { result: created } = (await createRes.json()) as { result: { data: { id: string } } }
+    const sessionId = created.data.id
+    await call(alice, 'session.join', { sessionId })
+    await waitForJoinNotification(1) // alice's own join notification, before resetting
+    joinNotifications = [] // only care about what happens after alice's own real join
+
+    // Bob's first visit is a genuinely new join — one notification.
+    await call(bob, 'session.visit', { sessionId })
+    await waitForJoinNotification(1)
+    expect(joinNotifications).toEqual([{ sessionId, userId: bob.userId }])
+
+    // Navigating away and back (e.g. viewing a different session, then
+    // returning) calls visit again for an already-joined member — this
+    // must not fan out a second "joined" event, or every viewer sees a
+    // spurious repeat join notification (the bug this test guards).
+    await call(bob, 'session.visit', { sessionId })
+    await call(bob, 'session.visit', { sessionId })
+    // Nothing further to explicitly wait for (no new notification should
+    // fire) — a short delay gives a regression a real chance to land
+    // before asserting its absence, rather than racing past it.
+    await new Promise((r) => setTimeout(r, 100))
+    expect(joinNotifications).toEqual([{ sessionId, userId: bob.userId }])
+  })
+
+  test('listRecentVisits search filters by name, same as /start/join', async () => {
+    const alice = await createActor()
+    const topicId = await griefTopicId(alice)
+    const griefId = await createNamed(alice, topicId, 'Weekly grief circle')
+    const anxietyId = await createNamed(alice, topicId, 'Anxiety support circle')
+    await call(alice, 'session.visit', { sessionId: griefId })
+    await call(alice, 'session.visit', { sessionId: anxietyId })
+
+    const res = await query(alice, 'session.listRecentVisits', { search: 'grief', limit: 10 })
+    const { result } = (await res.json()) as { result: { data: { visits: { id: string }[] } } }
+    expect(result.data.visits.map((v) => v.id)).toEqual([griefId])
+  })
+
+  test('listRecentVisits never returns another user\'s visits', async () => {
+    const alice = await createActor()
+    const bob = await createActor()
+    const topicId = await griefTopicId(alice)
+    const aliceSessionId = await createNamed(alice, topicId, "Alice's circle")
+    await call(alice, 'session.visit', { sessionId: aliceSessionId })
+
+    const res = await query(bob, 'session.listRecentVisits', { limit: 10 })
+    const { result } = (await res.json()) as { result: { data: { visits: { id: string }[] } } }
+    expect(result.data.visits).toEqual([])
+  })
+})
+
+describe('session.getSummary', () => {
+  test('returns the session without joining it — a read-only existence check', async () => {
+    const alice = await createActor()
+    const bob = await createActor()
+
+    const createRes = await call(alice, 'session.create', {})
+    const { result: created } = (await createRes.json()) as { result: { data: { id: string } } }
+    const sessionId = created.data.id
+
+    const summaryRes = await query(bob, 'session.getSummary', { sessionId })
+    expect(summaryRes.status).toBe(200)
+    const { result } = (await summaryRes.json()) as { result: { data: { id: string } } }
+    expect(result.data.id).toBe(sessionId)
+
+    // Bob only called getSummary, never join/visit — getState (membership-
+    // gated) must still reject him.
+    const stateRes = await query(bob, 'session.getState', { sessionId })
+    expect(stateRes.status).toBe(403)
+  })
+
+  test('a session that does not exist is a 404', async () => {
+    const alice = await createActor()
+    const res = await query(alice, 'session.getSummary', { sessionId: '00000000-0000-0000-0000-000000000000' })
+    expect(res.status).toBe(404)
+  })
+})
+
+describe('session.checkGuidelines / session.agreeToGuidelines', () => {
+  test('reports not agreed until agreeToGuidelines is called, for a session the user has joined', async () => {
+    const alice = await createActor()
+    const created = await call(alice, 'session.create', {})
+    const { result } = (await created.json()) as { result: { data: { id: string } } }
+    const sessionId = result.data.id
+    await call(alice, 'session.visit', { sessionId })
+
+    const before = await call(alice, 'session.checkGuidelines', { sessionId })
+    const { result: beforeResult } = (await before.json()) as { result: { data: { agreed: boolean; agreedKeys: string[] } } }
+    expect(beforeResult.data.agreed).toBe(false)
+    expect(beforeResult.data.agreedKeys).toEqual([])
+
+    const agreeRes = await call(alice, 'session.agreeToGuidelines', { sessionId })
+    expect(agreeRes.status).toBe(200)
+
+    const after = await call(alice, 'session.checkGuidelines', { sessionId })
+    const { result: afterResult } = (await after.json()) as { result: { data: { agreed: boolean; agreedKeys: string[] } } }
+    expect(afterResult.data.agreed).toBe(true)
+    expect(afterResult.data.agreedKeys.length).toBeGreaterThan(0)
+  })
+
+  test('a returning user missing only a newly-added required key sees the rest pre-checked, not a blank slate', async () => {
+    const alice = await createActor()
+    const created = await call(alice, 'session.create', {})
+    const { result } = (await created.json()) as { result: { data: { id: string } } }
+    const sessionId = result.data.id
+    await call(alice, 'session.visit', { sessionId })
+
+    // Simulates "agreed before a checkbox was added" — write a partial
+    // agreements object directly, missing one required key.
+    const partialTimestamp = new Date().toISOString()
+    const partial = { community_guidelines: partialTimestamp, privacy_policy: partialTimestamp, anonymity_acknowledgement: partialTimestamp }
+    await db
+      .updateTable('session_users')
+      .set({ agreements: sql`${JSON.stringify(partial)}::jsonb` })
+      .where('session_id', '=', sessionId)
+      .execute()
+
+    const status = await call(alice, 'session.checkGuidelines', { sessionId })
+    const { result: statusResult } = (await status.json()) as { result: { data: { agreed: boolean; agreedKeys: string[] } } }
+    expect(statusResult.data.agreed).toBe(false)
+    expect(statusResult.data.agreedKeys.sort()).toEqual(['anonymity_acknowledgement', 'community_guidelines', 'privacy_policy'])
+    expect(statusResult.data.agreedKeys).not.toContain('terms_of_service')
+  })
+
+  test('is per-membership-row, not global — but a returning user is never asked twice: checkGuidelines auto-copies a prior agreement onto a new session', async () => {
+    const alice = await createActor()
+
+    const first = await call(alice, 'session.create', {})
+    const { result: firstCreated } = (await first.json()) as { result: { data: { id: string } } }
+    await call(alice, 'session.visit', { sessionId: firstCreated.data.id })
+    await call(alice, 'session.agreeToGuidelines', { sessionId: firstCreated.data.id })
+
+    const second = await call(alice, 'session.create', {})
+    const { result: secondCreated } = (await second.json()) as { result: { data: { id: string } } }
+    await call(alice, 'session.visit', { sessionId: secondCreated.data.id })
+
+    // Never explicitly agreed on the second session — checkGuidelines
+    // alone must report agreed, having copied the first session's
+    // agreement forward.
+    const status = await call(alice, 'session.checkGuidelines', { sessionId: secondCreated.data.id })
+    const { result } = (await status.json()) as { result: { data: { agreed: boolean } } }
+    expect(result.data.agreed).toBe(true)
+  })
+
+  test('a brand-new user with no prior agreement anywhere is not auto-agreed', async () => {
+    const alice = await createActor()
+    const created = await call(alice, 'session.create', {})
+    const { result } = (await created.json()) as { result: { data: { id: string } } }
+    await call(alice, 'session.visit', { sessionId: result.data.id })
+
+    const status = await call(alice, 'session.checkGuidelines', { sessionId: result.data.id })
+    const { result: statusResult } = (await status.json()) as { result: { data: { agreed: boolean } } }
+    expect(statusResult.data.agreed).toBe(false)
   })
 })

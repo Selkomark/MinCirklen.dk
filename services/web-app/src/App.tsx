@@ -1,5 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { I18nProvider as RACI18nProvider } from 'react-aria-components'
+import { useTranslation } from 'react-i18next'
+import './i18n'
 import { ThemeProvider } from './components/ThemeProvider'
+import { SessionSocketProvider } from './SessionSocketProvider'
+import { PreferencesProvider } from './PreferencesProvider'
 import { ToastRegionRoot } from './components/Toast'
 import { Catalog } from './Catalog'
 import { LandingPage } from './LandingPage'
@@ -199,6 +204,7 @@ function useRoute() {
 }
 
 function Shell() {
+  const { t } = useTranslation('errors')
   const { route, navigate } = useRoute()
 
   const gateKey = GATED_ROUTE_NAMES.has(route.name) ? route.name : null
@@ -239,7 +245,7 @@ function Shell() {
   }
 
   if (route.name === 'not-found') {
-    return <ErrorPage code={404} title="Page not found" message="That page doesn't exist, or it may have moved." />
+    return <ErrorPage code={404} title={t('notFound.title')} message={t('notFound.message')} />
   }
 
   return (
@@ -252,16 +258,34 @@ function Shell() {
       >
         {route.name === 'system-design' && <Catalog />}
         {route.name === 'landing' && <LandingPage />}
-        {route.name === 'dashboard' && authStatus.kind === 'verified' && <DashboardPage />}
-        {route.name === 'start' && authStatus.kind === 'verified' && (
-          <StartPage onChooseJoin={() => navigate(startJoinPath())} onChooseNew={() => navigate(startNewPath())} />
-        )}
-        {route.name === 'start-join' && authStatus.kind === 'verified' && (
-          <StartJoinPage onBack={() => navigate(startPath())} onComplete={(sessionId) => navigate(dashboardPath(sessionId))} />
-        )}
-        {route.name === 'start-new' && authStatus.kind === 'verified' && (
-          <StartNewPage onBack={() => navigate(startPath())} onComplete={(sessionId) => navigate(dashboardPath(sessionId))} />
-        )}
+        {authStatus.kind === 'verified' &&
+          (route.name === 'dashboard' ||
+            route.name === 'start' ||
+            route.name === 'start-join' ||
+            route.name === 'start-new') && (
+            // One persistent connection across every gated page below,
+            // not one per page — see SessionSocketProvider.tsx. Mounted
+            // here (not higher, e.g. around all of Shell) specifically
+            // because it's only meaningful once verified: an anonymous
+            // visitor has no sessions to subscribe to, and mc_session
+            // may not even be a valid cookie yet.
+            <PreferencesProvider>
+              <SessionSocketProvider>
+                {route.name === 'dashboard' && (
+                  <DashboardPage sessionId={route.sessionId} onNavigate={(sessionId) => navigate(dashboardPath(sessionId))} />
+                )}
+                {route.name === 'start' && (
+                  <StartPage onChooseJoin={() => navigate(startJoinPath())} onChooseNew={() => navigate(startNewPath())} />
+                )}
+                {route.name === 'start-join' && (
+                  <StartJoinPage onBack={() => navigate(startPath())} onComplete={(sessionId) => navigate(dashboardPath(sessionId))} />
+                )}
+                {route.name === 'start-new' && (
+                  <StartNewPage onBack={() => navigate(startPath())} onComplete={(sessionId) => navigate(dashboardPath(sessionId))} />
+                )}
+              </SessionSocketProvider>
+            </PreferencesProvider>
+          )}
         {route.name === 'login' && authStatus.kind === 'anonymous' && <LoginPage />}
         {route.name === 'register' && authStatus.kind === 'needs-profile' && (
           <RegisterPage onComplete={() => navigate(startPath())} />
@@ -272,13 +296,28 @@ function Shell() {
   )
 }
 
+// react-i18next's language codes (SUPPORTED_LNGS in i18n.ts) are bare
+// BCP-47 primary tags; react-aria-components' I18nProvider wants a full
+// locale for its date/calendar/number formatting internals — this is the
+// one place that maps between the two, kept in sync automatically since
+// useTranslation()'s `i18n.language` re-renders on every changeLanguage()
+// call (PreferencesProvider, or the public-site language switcher).
+const RAC_LOCALES: Record<string, string> = { en: 'en-US', sv: 'sv-SE', da: 'da-DK', nb: 'nb-NO', fi: 'fi-FI' }
+
+function LocaleSync({ children }: { children: ReactNode }) {
+  const { i18n } = useTranslation()
+  return <RACI18nProvider locale={RAC_LOCALES[i18n.language] ?? RAC_LOCALES.en}>{children}</RACI18nProvider>
+}
+
 export default function App() {
   return (
-    <ThemeProvider>
-      <ErrorBoundary>
-        <Shell />
-      </ErrorBoundary>
-      <CookieConsentBanner />
-    </ThemeProvider>
+    <LocaleSync>
+      <ThemeProvider>
+        <ErrorBoundary>
+          <Shell />
+        </ErrorBoundary>
+        <CookieConsentBanner />
+      </ThemeProvider>
+    </LocaleSync>
   )
 }

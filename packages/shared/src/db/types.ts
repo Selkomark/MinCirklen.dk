@@ -1,4 +1,4 @@
-import type { ColumnType, Generated } from 'kysely'
+import type { ColumnType, Generated, JSONColumnType } from 'kysely'
 
 // timestamptz columns: selected as Date, inserted as Date|string|undefined
 // (defaults to now() when omitted), never updated directly through a raw
@@ -38,6 +38,17 @@ export interface SessionUsersTable {
   joined_at: Timestamp
   left_at: NullableTimestamp
   turn_order: number | null
+  // Bumped on every visit to /s/:sessionId, not just the original join —
+  // see migrations/0010_session_visit_tracking.ts. Backs the "recent
+  // sessions" sidebar ordering (most recently visited first).
+  last_visited_at: Timestamp
+  // agreement key -> ISO8601 timestamp this user agreed to it at, for
+  // *this* session join specifically (e.g. "community_guidelines",
+  // "privacy_policy", "anonymity_acknowledgement", "terms_of_service") —
+  // see repositories/sessionRepository.ts's CIRCLE_GUIDELINE_AGREEMENT_KEYS
+  // and migrations/0013_move_agreements_to_session_users.ts for why this
+  // lives per-join rather than once per user.
+  agreements: JSONColumnType<Record<string, string>, Record<string, string> | undefined>
 }
 
 export interface MessagesTable {
@@ -88,6 +99,10 @@ export interface UserProfilesTable {
   stay_anonymous: Generated<boolean>
   terms_accepted_at: Timestamp
   created_at: Timestamp
+  // Both nullable — null means "not set," not an empty/invalid value. See
+  // migrations/0014_user_preferences.ts.
+  language: string | null
+  timezone: string | null
 }
 
 export interface TopicsTable {

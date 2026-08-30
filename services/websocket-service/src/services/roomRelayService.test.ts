@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { isAuthorizedToJoinRoom, relayMessages } from './roomRelayService'
+import { isAuthorizedToJoinRoom, publishToRoom, relayMessages } from './roomRelayService'
 
 async function* fakeMessages(values: string[]): AsyncIterable<string> {
   for (const value of values) {
@@ -25,5 +25,13 @@ describe('relayMessages', () => {
     const sent: string[] = []
     await relayMessages(fakeMessages([]), (data) => sent.push(data))
     expect(sent).toEqual([])
+  })
+})
+
+describe('publishToRoom', () => {
+  test('delegates to the injected publish call with the given payload', () => {
+    const published: unknown[] = []
+    publishToRoom({ publish: (payload) => published.push(payload) }, { id: 'm1', body: 'hi' })
+    expect(published).toEqual([{ id: 'm1', body: 'hi' }])
   })
 })

@@ -1,19 +1,20 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { DEFAULT_LOCAL_DATABASE_URL, createDb, createPgPool, runMigrations } from '@mincirklen/shared'
+import { sql } from 'kysely'
 import {
-  NotYourTurnError,
+  CIRCLE_GUIDELINE_AGREEMENT_KEYS,
   SessionFullError,
   SessionNotFoundError,
-  TurnAlreadyClaimedError,
-  advanceTurn,
-  claimTurn,
+  checkAndSyncGuidelines,
   createSession,
   getRoster,
-  getSessionState,
+  getSessionStatus,
+  getSessionSummary,
   isSessionMember,
   joinSession,
   listOpenSessions,
-  releaseTurnClaim,
+  listRecentSessionVisits,
+  recordGuidelinesAgreement,
 } from './sessionRepository'
 
 const pool = createPgPool(
@@ -52,13 +53,16 @@ async function seedSessionWithUsers(count: number) {
 }
 
 describe('createSession', () => {
-  test('creates a session in forming status with no current turn', async () => {
+  test('creates a session in forming status with no current turn and an empty roster', async () => {
     const { id } = await createSession(db)
-    const state = await getSessionState(db, id)
 
-    expect(state?.status).toBe('forming')
-    expect(state?.currentTurnUserId).toBeNull()
-    expect(state?.roster).toEqual([])
+    const status = await getSessionStatus(db, id)
+    expect(status?.status).toBe('forming')
+
+    const row = await db.selectFrom('sessions').select('current_turn_user_id').where('id', '=', id).executeTakeFirstOrThrow()
+    expect(row.current_turn_user_id).toBeNull()
+
+    expect(await getRoster(db, id)).toEqual([])
   })
 
   test('leaves scheduling columns null when no params are given', async () => {
@@ -108,19 +112,33 @@ describe('joinSession', () => {
       { userId: userIds[1], turnOrder: 1 },
     ])
 
-    const state = await getSessionState(db, sessionId)
-    expect(state?.status).toBe('active')
-    expect(state?.currentTurnUserId).toBe(userIds[0])
+    const status = await getSessionStatus(db, sessionId)
+    expect(status?.status).toBe('active')
+
+    const row = await db
+      .selectFrom('sessions')
+      .select('current_turn_user_id')
+      .where('id', '=', sessionId)
+      .executeTakeFirstOrThrow()
+    expect(row.current_turn_user_id).toBe(userIds[0])
   })
 
-  test('is idempotent for a user who has already joined', async () => {
+  test('is idempotent for a user who has already joined, and reports it as not a new join', async () => {
     const { sessionId, userIds } = await seedSessionWithUsers(1)
 
     const rejoin = await joinSession(db, sessionId, userIds[0] as string)
-    expect(rejoin).toEqual({ userId: userIds[0], turnOrder: 0 })
+    expect(rejoin).toEqual({ entry: { userId: userIds[0], turnOrder: 0 }, isNewJoin: false })
 
     const roster = await getRoster(db, sessionId)
     expect(roster).toHaveLength(1)
+  })
+
+  test('reports a first-time join as a new join', async () => {
+    const { sessionId } = await seedSessionWithUsers(0)
+    const user = await db.insertInto('users').defaultValues().returningAll().executeTakeFirstOrThrow()
+
+    const result = await joinSession(db, sessionId, user.id)
+    expect(result).toEqual({ entry: { userId: user.id, turnOrder: 0 }, isNewJoin: true })
   })
 
   test('rejects a join once the session is full', async () => {
@@ -135,6 +153,28 @@ describe('joinSession', () => {
     await expect(
       joinSession(db, '00000000-0000-0000-0000-000000000000', user.id),
     ).rejects.toBeInstanceOf(SessionNotFoundError)
+  })
+
+  test('bumps last_visited_at when an existing member revisits', async () => {
+    const { sessionId, userIds } = await seedSessionWithUsers(1)
+    const userId = userIds[0] as string
+    const before = await db
+      .selectFrom('session_users')
+      .select('last_visited_at')
+      .where('session_id', '=', sessionId)
+      .where('user_id', '=', userId)
+      .executeTakeFirstOrThrow()
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await joinSession(db, sessionId, userId)
+
+    const after = await db
+      .selectFrom('session_users')
+      .select('last_visited_at')
+      .where('session_id', '=', sessionId)
+      .where('user_id', '=', userId)
+      .executeTakeFirstOrThrow()
+    expect(after.last_visited_at.getTime()).toBeGreaterThan(before.last_visited_at.getTime())
   })
 
   test('enforces a scheduled circle\'s own capacity instead of the global max', async () => {
@@ -168,44 +208,127 @@ describe('isSessionMember', () => {
   })
 })
 
-describe('turn claiming and advancing', () => {
-  test('claimTurn succeeds for the current-turn holder and rejects everyone else', async () => {
-    const { sessionId, userIds } = await seedSessionWithUsers(2)
-
-    await expect(claimTurn(db, sessionId, userIds[0] as string)).resolves.toBeUndefined()
-    await releaseTurnClaim(db, sessionId)
-
-    await expect(claimTurn(db, sessionId, userIds[1] as string)).rejects.toBeInstanceOf(NotYourTurnError)
+describe('getSessionSummary', () => {
+  test('returns null for a session that does not exist', async () => {
+    expect(await getSessionSummary(db, '00000000-0000-0000-0000-000000000000')).toBeNull()
   })
 
-  test('claimTurn rejects a second concurrent claim while one is fresh', async () => {
-    const { sessionId, userIds } = await seedSessionWithUsers(1)
-
-    await claimTurn(db, sessionId, userIds[0] as string)
-    await expect(claimTurn(db, sessionId, userIds[0] as string)).rejects.toBeInstanceOf(
-      TurnAlreadyClaimedError,
-    )
+  test('returns a topic-less summary for an ad-hoc session', async () => {
+    const { id } = await createSession(db)
+    expect(await getSessionSummary(db, id)).toMatchObject({
+      id,
+      status: 'forming',
+      name: null,
+      topic: null,
+      joinedCount: 0,
+    })
   })
 
-  test('advanceTurn wraps around the roster and clears the claim', async () => {
-    const { sessionId, userIds } = await seedSessionWithUsers(2)
+  test('returns topic and live joinedCount for a scheduled circle', async () => {
+    const topic = await seedTopic()
+    const { id } = await createSession(db, {
+      topicId: topic.id,
+      name: 'Grief circle',
+      scheduledAt: new Date(),
+      durationMinutes: 30,
+      capacity: 4,
+    })
+    const user = await db.insertInto('users').defaultValues().returningAll().executeTakeFirstOrThrow()
+    await joinSession(db, id, user.id)
 
-    await claimTurn(db, sessionId, userIds[0] as string)
-    await advanceTurn(db, sessionId)
-
-    let state = await getSessionState(db, sessionId)
-    expect(state?.currentTurnUserId).toBe(userIds[1] as string)
-
-    await claimTurn(db, sessionId, userIds[1] as string)
-    await advanceTurn(db, sessionId)
-
-    state = await getSessionState(db, sessionId)
-    expect(state?.currentTurnUserId).toBe(userIds[0] as string)
-
-    // A fresh claim should succeed after advancing, proving the claim was cleared.
-    await expect(claimTurn(db, sessionId, userIds[0] as string)).resolves.toBeUndefined()
+    const summary = await getSessionSummary(db, id)
+    expect(summary).toMatchObject({
+      id,
+      status: 'active',
+      name: 'Grief circle',
+      durationMinutes: 30,
+      capacity: 4,
+      joinedCount: 1,
+      topic: { id: topic.id, slug: topic.slug, label: topic.label },
+    })
+    expect(summary?.scheduledAt).toBeInstanceOf(Date)
   })
 })
+
+describe('listRecentSessionVisits', () => {
+  async function seedNamedVisit(userId: string, topicId: string, name: string) {
+    const { id } = await createSession(db, { topicId, name, scheduledAt: new Date(), durationMinutes: 30, capacity: 8 })
+    await joinSession(db, id, userId)
+    return id
+  }
+
+  test('orders by most recently visited first', async () => {
+    const user = await db.insertInto('users').defaultValues().returningAll().executeTakeFirstOrThrow()
+    const first = await createSession(db)
+    await joinSession(db, first.id, user.id)
+    const second = await createSession(db)
+    await joinSession(db, second.id, user.id)
+
+    const { visits, nextCursor } = await listRecentSessionVisits(db, { userId: user.id, limit: 10 })
+    expect(visits.map((v) => v.id)).toEqual([second.id, first.id])
+    expect(nextCursor).toBeNull()
+  })
+
+  test('revisiting an already-joined session moves it back to the top', async () => {
+    const user = await db.insertInto('users').defaultValues().returningAll().executeTakeFirstOrThrow()
+    const first = await createSession(db)
+    await joinSession(db, first.id, user.id)
+    const second = await createSession(db)
+    await joinSession(db, second.id, user.id)
+
+    await joinSession(db, first.id, user.id) // revisit
+
+    const { visits } = await listRecentSessionVisits(db, { userId: user.id, limit: 10 })
+    expect(visits.map((v) => v.id)).toEqual([first.id, second.id])
+  })
+
+  test('paginates forward with a load-more cursor', async () => {
+    const user = await db.insertInto('users').defaultValues().returningAll().executeTakeFirstOrThrow()
+    const ids: string[] = []
+    for (let i = 0; i < 3; i++) {
+      const session = await createSession(db)
+      await joinSession(db, session.id, user.id)
+      ids.push(session.id)
+    }
+
+    const page1 = await listRecentSessionVisits(db, { userId: user.id, limit: 2 })
+    expect(page1.visits.map((v) => v.id)).toEqual([ids[2], ids[1]])
+    expect(page1.nextCursor).not.toBeNull()
+
+    const page2 = await listRecentSessionVisits(db, { userId: user.id, limit: 2, cursor: page1.nextCursor as string })
+    expect(page2.visits.map((v) => v.id)).toEqual([ids[0]])
+    expect(page2.nextCursor).toBeNull()
+  })
+
+  test('only returns the requesting user\'s own visits', async () => {
+    const userA = await db.insertInto('users').defaultValues().returningAll().executeTakeFirstOrThrow()
+    const userB = await db.insertInto('users').defaultValues().returningAll().executeTakeFirstOrThrow()
+    const sessionA = await createSession(db)
+    await joinSession(db, sessionA.id, userA.id)
+    const sessionB = await createSession(db)
+    await joinSession(db, sessionB.id, userB.id)
+
+    const { visits } = await listRecentSessionVisits(db, { userId: userB.id, limit: 10 })
+    expect(visits.map((v) => v.id)).toEqual([sessionB.id])
+  })
+
+  test('search matches by name, same semantics as listOpenSessions', async () => {
+    const user = await db.insertInto('users').defaultValues().returningAll().executeTakeFirstOrThrow()
+    const topic = await seedTopic()
+    const griefId = await seedNamedVisit(user.id, topic.id, 'Weekly grief circle')
+    await seedNamedVisit(user.id, topic.id, 'Anxiety support circle')
+
+    const { visits } = await listRecentSessionVisits(db, { userId: user.id, search: 'grief', limit: 10 })
+    expect(visits.map((v) => v.id)).toEqual([griefId])
+  })
+})
+
+// Turn claiming/advancing moved to websocket-service (Redis is now the
+// live authority) — see
+// services/websocket-service/src/adapters/redisTurnStateAdapter.integration.test.ts
+// and services/websocket-service/src/controllers/internalController.integration.test.ts
+// for that coverage. Nothing in this repository claims/advances turns
+// any more.
 
 describe('listOpenSessions', () => {
   test('includes forming and active scheduled circles with room left, excludes the rest', async () => {
@@ -748,5 +871,164 @@ describe('listOpenSessions', () => {
 
       expect(backward).toEqual(forward)
     })
+  })
+})
+
+describe('checkAndSyncGuidelines / recordGuidelinesAgreement', () => {
+  test('not agreed with no agreedKeys before agreeing, fully agreed with every key after', async () => {
+    const { sessionId, userIds } = await seedSessionWithUsers(1)
+    const userId = userIds[0] as string
+
+    const before = await checkAndSyncGuidelines(db, sessionId, userId)
+    expect(before).toEqual({ agreed: false, agreedKeys: [] })
+
+    await recordGuidelinesAgreement(db, sessionId, userId)
+
+    const after = await checkAndSyncGuidelines(db, sessionId, userId)
+    expect(after.agreed).toBe(true)
+    expect([...after.agreedKeys].sort()).toEqual([...CIRCLE_GUIDELINE_AGREEMENT_KEYS].sort())
+  })
+
+  test('records a real ISO8601 timestamp per key on the session_users row', async () => {
+    const { sessionId, userIds } = await seedSessionWithUsers(1)
+    const userId = userIds[0] as string
+
+    await recordGuidelinesAgreement(db, sessionId, userId)
+
+    const row = await db
+      .selectFrom('session_users')
+      .select('agreements')
+      .where('session_id', '=', sessionId)
+      .where('user_id', '=', userId)
+      .executeTakeFirstOrThrow()
+    for (const key of CIRCLE_GUIDELINE_AGREEMENT_KEYS) {
+      expect(row.agreements[key]).toBeDefined()
+      expect(new Date(row.agreements[key] as string).toISOString()).toBe(row.agreements[key])
+    }
+  })
+
+  test('is idempotent — a later call never overwrites an already-recorded timestamp', async () => {
+    const { sessionId, userIds } = await seedSessionWithUsers(1)
+    const userId = userIds[0] as string
+
+    await recordGuidelinesAgreement(db, sessionId, userId)
+    const first = await db
+      .selectFrom('session_users')
+      .select('agreements')
+      .where('session_id', '=', sessionId)
+      .where('user_id', '=', userId)
+      .executeTakeFirstOrThrow()
+
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await recordGuidelinesAgreement(db, sessionId, userId)
+    const second = await db
+      .selectFrom('session_users')
+      .select('agreements')
+      .where('session_id', '=', sessionId)
+      .where('user_id', '=', userId)
+      .executeTakeFirstOrThrow()
+
+    expect(second.agreements).toEqual(first.agreements)
+  })
+
+  test('agreeing on one session is still found on another — checkAndSyncGuidelines looks across every session this user has joined', async () => {
+    const sessionA = await seedSessionWithUsers(1)
+    const sessionB = await createSession(db)
+    const userId = sessionA.userIds[0] as string
+    await joinSession(db, sessionB.id, userId)
+
+    await recordGuidelinesAgreement(db, sessionA.sessionId, userId)
+
+    expect((await checkAndSyncGuidelines(db, sessionA.sessionId, userId)).agreed).toBe(true)
+    // Never explicitly agreed on session B — still reports agreed,
+    // because it looks at every session this user has joined, and syncs
+    // the finding onto B's own row too.
+    expect((await checkAndSyncGuidelines(db, sessionB.id, userId)).agreed).toBe(true)
+
+    const rowB = await db
+      .selectFrom('session_users')
+      .select('agreements')
+      .where('session_id', '=', sessionB.id)
+      .where('user_id', '=', userId)
+      .executeTakeFirstOrThrow()
+    for (const key of CIRCLE_GUIDELINE_AGREEMENT_KEYS) {
+      expect(rowB.agreements[key]).toBeDefined()
+    }
+  })
+
+  // Simulates "a new checkbox was added to CIRCLE_GUIDELINE_AGREEMENT_KEYS
+  // after this user already agreed to the old set" by writing a partial
+  // agreements object directly — recordGuidelinesAgreement always writes
+  // the *current* full set, so it can't reproduce a stale/partial one.
+  test('a returning user missing a newly-added required key sees only that key as not-yet-agreed, and it gets synced', async () => {
+    const sessionA = await seedSessionWithUsers(1)
+    const userId = sessionA.userIds[0] as string
+
+    const partialKeys = CIRCLE_GUIDELINE_AGREEMENT_KEYS.slice(0, -1)
+    const originalTimestamp = new Date().toISOString()
+    const partialAgreements: Record<string, string> = {}
+    for (const key of partialKeys) partialAgreements[key] = originalTimestamp
+    await db
+      .updateTable('session_users')
+      .set({ agreements: sql`${JSON.stringify(partialAgreements)}::jsonb` })
+      .where('session_id', '=', sessionA.sessionId)
+      .where('user_id', '=', userId)
+      .execute()
+
+    const sessionB = await createSession(db)
+    await joinSession(db, sessionB.id, userId)
+
+    const status = await checkAndSyncGuidelines(db, sessionB.id, userId)
+    expect(status.agreed).toBe(false)
+    expect([...status.agreedKeys].sort()).toEqual([...partialKeys].sort())
+
+    // The already-agreed keys synced onto session B's row too, with
+    // their *original* timestamp — the new key is genuinely absent.
+    const rowB = await db
+      .selectFrom('session_users')
+      .select('agreements')
+      .where('session_id', '=', sessionB.id)
+      .where('user_id', '=', userId)
+      .executeTakeFirstOrThrow()
+    for (const key of partialKeys) {
+      expect(rowB.agreements[key]).toBe(originalTimestamp)
+    }
+    const newKey = CIRCLE_GUIDELINE_AGREEMENT_KEYS[CIRCLE_GUIDELINE_AGREEMENT_KEYS.length - 1] as string
+    expect(rowB.agreements[newKey]).toBeUndefined()
+  })
+
+  test('agreeing to the newly-added key afterward never disturbs the earlier keys\' original timestamps', async () => {
+    const sessionA = await seedSessionWithUsers(1)
+    const userId = sessionA.userIds[0] as string
+
+    const partialKeys = CIRCLE_GUIDELINE_AGREEMENT_KEYS.slice(0, -1)
+    const originalTimestamp = new Date(Date.now() - 60_000).toISOString()
+    const partialAgreements: Record<string, string> = {}
+    for (const key of partialKeys) partialAgreements[key] = originalTimestamp
+    await db
+      .updateTable('session_users')
+      .set({ agreements: sql`${JSON.stringify(partialAgreements)}::jsonb` })
+      .where('session_id', '=', sessionA.sessionId)
+      .where('user_id', '=', userId)
+      .execute()
+
+    // The user is shown the modal with the old keys pre-checked, checks
+    // the new one too, and "Agree and continue" re-submits the full
+    // current set — same as recordGuidelinesAgreement always does.
+    await recordGuidelinesAgreement(db, sessionA.sessionId, userId)
+
+    const row = await db
+      .selectFrom('session_users')
+      .select('agreements')
+      .where('session_id', '=', sessionA.sessionId)
+      .where('user_id', '=', userId)
+      .executeTakeFirstOrThrow()
+
+    for (const key of partialKeys) {
+      expect(row.agreements[key]).toBe(originalTimestamp)
+    }
+    const newKey = CIRCLE_GUIDELINE_AGREEMENT_KEYS[CIRCLE_GUIDELINE_AGREEMENT_KEYS.length - 1] as string
+    expect(row.agreements[newKey]).toBeDefined()
+    expect(row.agreements[newKey]).not.toBe(originalTimestamp)
   })
 })

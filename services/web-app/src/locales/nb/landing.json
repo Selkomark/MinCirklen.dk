@@ -1,0 +1,82 @@
+{
+  "header": {
+    "about": "Om",
+    "safety": "Sikkerhet",
+    "joinNow": "Bli med nå",
+    "logOut": "Logg ut"
+  },
+  "errors": {
+    "logoutFailed": "Noe gikk galt under utlogging."
+  },
+  "footer": {
+    "copyright": "© 2026 Selkomark. Alle rettigheter forbeholdt.",
+    "cookiePreferences": "Informasjonskapsel-innstillinger",
+    "product": "Produkt",
+    "circles": "Sirkler",
+    "howItWorks": "Hvordan det fungerer",
+    "pricing": "Priser",
+    "safety": "Sikkerhet",
+    "moderationTransparency": "Moderering og åpenhet",
+    "company": "Selskap",
+    "about": "Om",
+    "facilitators": "Samtaleledere",
+    "support": "Support",
+    "crisisResources": "Kriseressurser",
+    "accountAndData": "Konto og data",
+    "contact": "Kontakt",
+    "legal": "Juridisk",
+    "privacyPolicy": "Personvernerklæring",
+    "communityGuidelines": "Fellesskapsregler",
+    "termsAndConditions": "Vilkår og betingelser"
+  },
+  "hero": {
+    "imageAlt": "Illustrasjon av mennesker i en MinCirklen-sirkel for likepersonstøtte, som snakker anonymt og avslappet",
+    "badge": "Nettopp lansert — tidlig pilot",
+    "title": "Et sted å bli hørt, uten å bli dømt",
+    "lead": "Anonyme, modererte sirkler for likepersonstøtte. Vi er helt nye — bli med i en av våre første sirkler og bidra til å forme hva dette blir.",
+    "joinCircle": "Bli med i en sirkel",
+    "learnMore": "Les mer"
+  },
+  "stats": {
+    "anonymousValue": "Anonymt",
+    "anonymousLabel": "Som standard, hver sirkel",
+    "zeroValue": "Null",
+    "zeroLabel": "Profiler, kataloger eller måter å slå opp noen på"
+  },
+  "features": {
+    "title": "Bygget rundt sikkerhet",
+    "lead": "Hver del av opplevelsen er utformet for å beskytte deg først.",
+    "moderatedTitle": "Moderert",
+    "moderatedBody": "En trenet samtaleleder er til stede i hver økt, og du kan forlate eller rapportere når som helst.",
+    "anonymousTitle": "Anonymt som standard",
+    "anonymousBody": "Del så mye eller så lite du vil — ingen ser ditt virkelige navn med mindre du velger å dele det.",
+    "noPressureTitle": "Ikke noe press",
+    "noPressureBody": "Det er alltid greit å bare lytte. Det er ingen forpliktelse til å snakke, og ingen råd gis med mindre det blir spurt om."
+  },
+  "testimonial": {
+    "title": "Hvorfor vi bygger dette",
+    "quote": "Skap et trygt og koselig sted på internett der folk endelig kan åpne seg. Det er hele idéen — vi har akkurat startet, og vi vil heller vokse sakte og trygt enn raskt og hensynsløst.",
+    "role": "Grunnlegger, MinCirklen"
+  },
+  "pricing": {
+    "title": "Enkel, ærlig prising",
+    "lead": "Vi er i tidlig pilot og har ikke satt priser ennå — det vil alltid finnes en gratis vei inn.",
+    "freeName": "Gratis, under piloten",
+    "freePrice": "Gratis",
+    "freeFeature1": "Ubegrensede økter",
+    "freeFeature2": "Anonymt som standard",
+    "freeFeature3": "Ingen grense for samtalens lengde",
+    "supportName": "Støtt MinCirklen",
+    "supportPrice": "Ikke fastsatt",
+    "supportPeriod": "pris ikke bestemt ennå",
+    "supportFeature1": "En måte å hjelpe til med å finansiere drift og sikkerhetsgjennomgang",
+    "supportFeature2": "Samme turlengde og skrivetid som gratis",
+    "supportFeature3": "Vi kunngjør detaljer før noe endres",
+    "getStarted": "Kom i gang"
+  },
+  "cta": {
+    "title": "Klar til å bli med i en sirkel?",
+    "action": "Kom i gang — det er gratis",
+    "body": "Det tar bare et minutt, og du kan holde deg anonym hele veien."
+  }
+}

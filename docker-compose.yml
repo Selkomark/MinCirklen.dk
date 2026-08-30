@@ -171,17 +171,21 @@ services:
     restart: unless-stopped
     environment:
       PORT: '8787'
-      REDIS_HOST: redis
-      REDIS_PORT: '6379'
       DATABASE_URL: postgres://mincirklen:mincirklen@postgres:5432/mincirklen
       DB_SCHEMA: dev
       MODERATION_SVC_URL: http://moderation-service:8082
+      # trpc-api never talks to NATS/Redis directly — those are internal to
+      # websocket-service (its own cross-pod fanout and shared memory). This
+      # is the one HTTP surface trpc-api uses to hand it a message to relay
+      # (see websocketServiceAdapter.ts); INTERNAL_SERVICE_SECRET must match
+      # websocket-service's own value below.
+      WEBSOCKET_SERVICE_URL: http://websocket-service:8080
+      INTERNAL_SERVICE_SECRET: dev-only-not-for-production
       AUTH_SECRET: dev-only-not-for-production
       # Keys the OAuth subject hash (user_identities.provider_subject_hash)
       # — deliberately a different value than AUTH_SECRET, same key-
       # separation reasoning as the comment on AppEnv.identityHashKey.
       IDENTITY_HASH_KEY: dev-only-not-for-production-identity-hash
-      NATS_URL: nats://nats:4222
       PUBLIC_BASE_URL: https://dev-mincirklen.dk
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
@@ -195,10 +199,6 @@ services:
       - ./packages/shared/migrations:/app/packages/shared/migrations
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      nats:
         condition: service_healthy
       vault-init:
         condition: service_completed_successfully
@@ -215,6 +215,18 @@ services:
       DB_SCHEMA: dev
       AUTH_SECRET: dev-only-not-for-production
       NATS_URL: nats://nats:4222
+      # This service's own shared memory for live round/roster state
+      # (Stage 2 of the websocket-owned-turn-state redesign) — never
+      # touched by trpc-api directly.
+      REDIS_URL: redis://redis:6379
+      # Must match trpc-api's own INTERNAL_SERVICE_SECRET above — this is
+      # the shared secret trpc-api presents on /internal/* calls.
+      INTERNAL_SERVICE_SECRET: dev-only-not-for-production
+      # Defaults to 'binary' if unset (see index.ts) — explicit 'json'
+      # here keeps local dev's WS traffic readable in DevTools. Flip to
+      # 'binary' locally to test that path before it ships; production
+      # needs no config to get the binary default.
+      WS_WIRE_FORMAT: json
     ports:
       - '8091:8080'
     volumes:
@@ -224,6 +236,8 @@ services:
       postgres:
         condition: service_healthy
       nats:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   moderation-service:

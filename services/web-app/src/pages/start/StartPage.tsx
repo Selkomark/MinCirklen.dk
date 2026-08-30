@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next'
 import { SiteHeader } from '../../SiteHeader'
 import { SiteFooter } from '../../SiteFooter'
 import { useDocumentTitle } from '../../useDocumentTitle'
@@ -8,6 +9,7 @@ export interface StartPageProps {
 }
 
 export function StartPage({ onChooseJoin, onChooseNew }: StartPageProps) {
+  const { t } = useTranslation('start')
   useDocumentTitle('Start a circle — MinCirklen')
 
   return (
@@ -34,10 +36,10 @@ export function StartPage({ onChooseJoin, onChooseNew }: StartPageProps) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
               <div>
                 <div style={{ fontSize: 'var(--font-size-xl)', fontWeight: 'var(--font-weight-bold)', color: 'var(--text-primary)' }}>
-                  New session
+                  {t('choose.title')}
                 </div>
                 <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginTop: 4 }}>
-                  How would you like to begin
+                  {t('choose.subtitle')}
                 </div>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
@@ -46,10 +48,10 @@ export function StartPage({ onChooseJoin, onChooseNew }: StartPageProps) {
                   style={{ cursor: 'pointer', flex: '1 1 220px', border: '0.5px solid var(--border-subtle)', borderRadius: 8, padding: 18 }}
                 >
                   <div style={{ fontSize: 'var(--font-size-md)', fontWeight: 'var(--font-weight-bold)', color: 'var(--text-primary)' }}>
-                    Join an existing circle
+                    {t('choose.joinTitle')}
                   </div>
                   <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginTop: 4 }}>
-                    Browse circles already forming
+                    {t('choose.joinSubtitle')}
                   </div>
                 </div>
                 <div
@@ -57,10 +59,10 @@ export function StartPage({ onChooseJoin, onChooseNew }: StartPageProps) {
                   style={{ cursor: 'pointer', flex: '1 1 220px', border: '0.5px solid var(--border-subtle)', borderRadius: 8, padding: 18 }}
                 >
                   <div style={{ fontSize: 'var(--font-size-md)', fontWeight: 'var(--font-weight-bold)', color: 'var(--text-primary)' }}>
-                    Start a new circle
+                    {t('choose.newTitle')}
                   </div>
                   <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginTop: 4 }}>
-                    Set topic, time, and length
+                    {t('choose.newSubtitle')}
                   </div>
                 </div>
               </div>

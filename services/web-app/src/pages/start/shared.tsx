@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import type { BadgeVariant } from '../../components/Badge'
+import { useSessionSocket } from '../../SessionSocketProvider'
 
 export interface Topic {
   id: string
@@ -20,22 +23,28 @@ export interface OpenSession {
   topic: Topic
 }
 
+// `label`/`hint` are deliberately not data here — they're translated at
+// the render sites (StartNewPage.tsx, StartJoinPage.tsx) via
+// `t('sizes.upTo', { count: sz.capacity })` and `durationLabel(id, t)`
+// below, both of which already hold a `t` from useTranslation('start').
 export const SIZES = [
-  { id: 'small', label: 'Small', hint: 'Up to 6', capacity: 6 },
-  { id: 'medium', label: 'Medium', hint: 'Up to 8', capacity: 8 },
-  { id: 'large', label: 'Large', hint: 'Up to 12', capacity: 12 },
+  { id: 'small', capacity: 6 },
+  { id: 'medium', capacity: 8 },
+  { id: 'large', capacity: 12 },
 ]
 
 export const DURATIONS = [
-  { id: '30', label: '30 min', minutes: 30 },
-  { id: '45', label: '45 min', minutes: 45 },
-  { id: '60', label: '60 min', minutes: 60 },
-  { id: '90', label: '90 min', minutes: 90 },
-  { id: 'open', label: 'Open-ended', minutes: null as number | null },
+  { id: '30', minutes: 30 },
+  { id: '45', minutes: 45 },
+  { id: '60', minutes: 60 },
+  { id: '90', minutes: 90 },
+  { id: 'open', minutes: null as number | null },
 ]
 
-export function durationLabel(id: string) {
-  return DURATIONS.find((d) => d.id === id)?.label ?? ''
+export function durationLabel(id: string, t: TFunction<'start'>) {
+  const duration = DURATIONS.find((d) => d.id === id)
+  if (!duration) return ''
+  return duration.minutes === null ? t('durations.openEnded') : t('shared.minutesShort', { count: duration.minutes })
 }
 
 // Safety net only — every circle created through the current /start/new
@@ -69,6 +78,7 @@ export function Chip({ label, active, onClick }: { label: string; active: boolea
 }
 
 export function StepBar({ step, total }: { step: number; total: number }) {
+  const { t } = useTranslation('start')
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', gap: 6 }}>
@@ -85,13 +95,14 @@ export function StepBar({ step, total }: { step: number; total: number }) {
         ))}
       </div>
       <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>
-        Step {step} of {total}
+        {t('shared.stepOf', { step, total })}
       </span>
     </div>
   )
 }
 
 export function useTopics() {
+  const { t } = useTranslation('start')
   const [state, setState] = useState<{ topics: Topic[]; loading: boolean; error: string | null }>({
     topics: [],
     loading: true,
@@ -104,12 +115,12 @@ export function useTopics() {
     void (async () => {
       try {
         const res = await fetch('/api/trpc/topics.list')
-        if (!res.ok) throw new Error('Could not load topics')
+        if (!res.ok) throw new Error(t('errors.topicsLoadFailed'))
         const body = (await res.json()) as { result: { data: Topic[] } }
         if (!cancelled) setState({ topics: body.result.data, loading: false, error: null })
       } catch (err) {
         if (!cancelled) {
-          setState({ topics: [], loading: false, error: err instanceof Error ? err.message : 'Could not load topics' })
+          setState({ topics: [], loading: false, error: err instanceof Error ? err.message : t('errors.topicsLoadFailed') })
         }
       }
     })()
@@ -117,6 +128,7 @@ export function useTopics() {
     return () => {
       cancelled = true
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- t() intentionally excluded: this fetch runs once per mount, not once per language
   }, [])
 
   return state
@@ -219,16 +231,9 @@ async function fetchOpenSessionsPage(
   return body.result.data
 }
 
-// TODO: once live joinedCount is backed by Redis (see the TODO in
-// sessionRepository.ts's joinSession), this hook should keep it live
-// rather than only refreshing on the next fetch: subscribe to updates
-// for exactly the session ids currently in `pages` (a session entering
-// via loadNext/loadPrevious subscribes; one falling out of the window on
-// eviction — the `next.slice(...)` calls below — unsubscribes). Sending
-// updates for rows the user can no longer even see is wasted traffic,
-// so the subscribe/unsubscribe set should track the window exactly, not
-// "everything ever loaded this session."
 export function useOpenSessions(query: OpenSessionsQuery) {
+  const { t } = useTranslation('start')
+  const { subscribeLiveCount } = useSessionSocket()
   const [pages, setPages] = useState<LoadedPage[]>([])
   const [loadingInitial, setLoadingInitial] = useState(true)
   const [loadingNext, setLoadingNext] = useState(false)
@@ -272,7 +277,7 @@ export function useOpenSessions(query: OpenSessionsQuery) {
           pagesRef.current = []
           setPages([])
           setLoadingInitial(false)
-          setError(err instanceof Error ? err.message : 'Could not load open circles')
+          setError(err instanceof Error ? err.message : t('errors.sessionsLoadFailed'))
         }
       })()
     }, SEARCH_DEBOUNCE_MS)
@@ -303,7 +308,7 @@ export function useOpenSessions(query: OpenSessionsQuery) {
         setPages(next)
       } catch (err) {
         if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : 'Could not load more circles')
+          setError(err instanceof Error ? err.message : t('errors.moreSessionsLoadFailed'))
         }
       } finally {
         loadingNextRef.current = false
@@ -333,7 +338,7 @@ export function useOpenSessions(query: OpenSessionsQuery) {
         setTopShiftVersion((v) => v + 1)
       } catch (err) {
         if (!controller.signal.aborted) {
-          setError(err instanceof Error ? err.message : 'Could not load previous circles')
+          setError(err instanceof Error ? err.message : t('errors.previousSessionsLoadFailed'))
         }
       } finally {
         loadingPreviousRef.current = false
@@ -342,8 +347,44 @@ export function useOpenSessions(query: OpenSessionsQuery) {
     })()
   }, [])
 
+  const sessions = useMemo(() => pages.flatMap((p) => p.sessions), [pages])
+
+  // Live participant counts, keyed by session id — overlays
+  // joinedCount (the static DB join tally) once a live count actually
+  // arrives, per StartJoinPage.tsx's own TODO on that field. Subscribed
+  // to exactly the session ids currently in the loaded window, via
+  // SessionSocketProvider's shared connection: a session entering the
+  // window subscribes, one falling out (eviction, or a filter/search
+  // change replacing the whole list) unsubscribes — sending live
+  // updates for rows the user can no longer even see would be wasted
+  // traffic.
+  const [liveCounts, setLiveCounts] = useState<Map<string, number>>(new Map())
+  const windowIds = useMemo(() => sessions.map((s) => s.id), [sessions])
+  const windowKey = windowIds.join(',')
+
+  useEffect(() => {
+    const unsubscribes = windowIds.map((id) =>
+      subscribeLiveCount(id, (count) => {
+        setLiveCounts((prev) => {
+          const next = new Map(prev)
+          next.set(id, count)
+          return next
+        })
+      }),
+    )
+    return () => {
+      for (const unsubscribe of unsubscribes) unsubscribe()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- windowIds is derived fresh every render; windowKey (its stable string form) is the real dependency
+  }, [windowKey, subscribeLiveCount])
+
+  const sessionsWithLiveCounts = useMemo(
+    () => sessions.map((s) => (liveCounts.has(s.id) ? { ...s, joinedCount: liveCounts.get(s.id)! } : s)),
+    [sessions, liveCounts],
+  )
+
   return {
-    sessions: pages.flatMap((p) => p.sessions),
+    sessions: sessionsWithLiveCounts,
     loadingInitial,
     loadingNext,
     loadingPrevious,
@@ -384,28 +425,32 @@ export function HighlightedText({ text, query }: { text: string; query: string }
 // status pill (badgeText/badgeVariant, rendered separately on the right —
 // see StartJoinPage.tsx) already carries the Live/Starting-soon/Open
 // signal, so this text never repeats it.
-function formatDuration(minutes: number): string {
-  if (minutes < 60) return `${minutes} min`
+function formatDuration(minutes: number, t: TFunction<'start'>): string {
+  if (minutes < 60) return t('shared.minutesShort', { count: minutes })
   const hours = Math.round(minutes / 60)
-  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'}`
+  if (hours < 24) return t('shared.hours', { count: hours })
   const days = Math.round(minutes / (60 * 24))
-  return `${days} day${days === 1 ? '' : 's'}`
+  return t('shared.days', { count: days })
 }
 
 // Presentation only — the backend returns raw status/scheduledAt/counts,
 // never these display strings, since they depend on the current time.
-export function describeTiming(session: OpenSession): { timing: string; badgeText: string; badgeVariant: BadgeVariant } {
+export function describeTiming(
+  session: OpenSession,
+  timeZone: string,
+  t: TFunction<'start'>,
+): { timing: string; badgeText: string; badgeVariant: BadgeVariant } {
   const minutesUntil = Math.round((new Date(session.scheduledAt).getTime() - Date.now()) / 60000)
   const timing =
     minutesUntil > 0
-      ? `Starts in ${formatDuration(minutesUntil)}`
-      : new Date(session.scheduledAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+      ? t('shared.startsIn', { duration: formatDuration(minutesUntil, t) })
+      : new Date(session.scheduledAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone })
 
   if (session.status === 'active') {
-    return { timing, badgeText: 'Live', badgeVariant: 'info' }
+    return { timing, badgeText: t('shared.live'), badgeVariant: 'info' }
   }
   if (minutesUntil > -30 && minutesUntil <= 30) {
-    return { timing, badgeText: 'Starting soon', badgeVariant: 'neutral' }
+    return { timing, badgeText: t('shared.startingSoon'), badgeVariant: 'neutral' }
   }
-  return { timing, badgeText: 'Open', badgeVariant: 'neutral' }
+  return { timing, badgeText: t('shared.open'), badgeVariant: 'neutral' }
 }

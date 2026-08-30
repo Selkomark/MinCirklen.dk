@@ -1,13 +1,13 @@
 export interface HealthDeps {
   pingDatabase: () => Promise<void>
-  pingRedis: () => Promise<void>
+  checkWebsocketService: () => Promise<void>
   checkModerationService: () => Promise<void>
 }
 
 export interface HealthResult {
   service: 'trpc-api'
   postgres: string
-  redis: string
+  websocketService: string
   moderationService: string
 }
 
@@ -21,11 +21,11 @@ async function describeCheck(check: () => Promise<void>): Promise<string> {
 }
 
 export async function getHealth(deps: HealthDeps): Promise<HealthResult> {
-  const [postgres, redis, moderationService] = await Promise.all([
+  const [postgres, websocketService, moderationService] = await Promise.all([
     describeCheck(deps.pingDatabase),
-    describeCheck(deps.pingRedis),
+    describeCheck(deps.checkWebsocketService),
     describeCheck(deps.checkModerationService),
   ])
 
-  return { service: 'trpc-api', postgres, redis, moderationService }
+  return { service: 'trpc-api', postgres, websocketService, moderationService }
 }

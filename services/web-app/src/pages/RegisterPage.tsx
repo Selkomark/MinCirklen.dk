@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { Key } from 'react-aria-components'
+import { useTranslation } from 'react-i18next'
 import { Button } from '../components/Button'
 import { TextField } from '../components/TextField'
 import { Select, SelectItem } from '../components/Select'
@@ -16,6 +17,7 @@ export interface RegisterPageProps {
 }
 
 export function RegisterPage({ onComplete }: RegisterPageProps) {
+  const { t } = useTranslation('auth')
   useDocumentTitle('Create your account — MinCirklen')
 
   const [firstName, setFirstName] = useState('')
@@ -47,12 +49,12 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
       })
 
       if (!res.ok) {
-        throw new Error(res.status === 401 ? 'Your session expired — please log in again.' : 'Something went wrong saving your details.')
+        throw new Error(res.status === 401 ? t('register.sessionExpired') : t('register.saveFailed'))
       }
 
       onComplete()
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : 'Something went wrong saving your details.')
+      setSubmitError(err instanceof Error ? err.message : t('register.saveFailed'))
       setIsSubmitting(false)
     }
   }
@@ -72,10 +74,10 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
         <div style={{ width: '100%', maxWidth: 480, display: 'flex', flexDirection: 'column', gap: 'clamp(20px, 4vw, 28px)' }}>
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontSize: 'var(--font-size-xl)', fontWeight: 'var(--font-weight-bold)', color: 'var(--text-primary)' }}>
-              Create your account
+              {t('register.title')}
             </div>
             <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)', marginTop: 6 }}>
-              A few details, then you're ready to join a circle.
+              {t('register.subtitle')}
             </div>
           </div>
 
@@ -93,7 +95,7 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
               <div style={{ flex: '1 1 180px' }}>
                 <TextField
-                  label="First name"
+                  label={t('register.firstName')}
                   value={firstName}
                   onChange={(e) => setFirstName(e.target.value)}
                   autoComplete="given-name"
@@ -101,7 +103,7 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
               </div>
               <div style={{ flex: '1 1 180px' }}>
                 <TextField
-                  label="Last name"
+                  label={t('register.lastName')}
                   value={lastName}
                   onChange={(e) => setLastName(e.target.value)}
                   autoComplete="family-name"
@@ -110,8 +112,8 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
             </div>
 
             <Select
-              label="Country"
-              placeholder="Select your country"
+              label={t('register.country')}
+              placeholder={t('register.countryPlaceholder')}
               selectedKey={country}
               onSelectionChange={setCountry}
             >
@@ -123,38 +125,32 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
             </Select>
 
             <TextField
-              label="Mobile number"
+              label={t('register.mobileNumber')}
               type="tel"
               value={mobile}
               onChange={(e) => setMobile(e.target.value)}
               autoComplete="tel"
-              hint="Used only for account safety — never shown in a circle."
+              hint={t('register.mobileHint')}
             />
 
-            <Alert variant="safe">
-              Your name is never shown to other users unless you choose to turn
-              anonymity off below.
-            </Alert>
+            <Alert variant="safe">{t('register.nameNotShown')}</Alert>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
                 <Checkbox isSelected={stayAnonymous} onChange={setStayAnonymous} />
-                <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>
-                  Stay anonymous in circles — other users see "Anonymous," not your
-                  name
-                </span>
+                <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>{t('register.stayAnonymous')}</span>
               </label>
 
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
                 <Checkbox isSelected={termsChecked} onChange={setTermsChecked} />
                 <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>
-                  I agree to the{' '}
+                  {t('register.agreeToThePrefix')}{' '}
                   <a href={publicPagePath('terms-and-conditions')} target="_blank" rel="noopener noreferrer" className="ds-inline-link">
-                    Terms and Conditions
+                    {t('register.termsAndConditions')}
                   </a>{' '}
-                  and{' '}
+                  {t('register.and')}{' '}
                   <a href={publicPagePath('privacy-policy')} target="_blank" rel="noopener noreferrer" className="ds-inline-link">
-                    Privacy Policy
+                    {t('register.privacyPolicy')}
                   </a>
                 </span>
               </label>
@@ -163,7 +159,7 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
             {submitError && <Alert variant="urgent">{submitError}</Alert>}
 
             <Button variant="safe" isPending={isSubmitting} isDisabled={!canSubmit} onPress={handleSubmit} style={{ width: '100%' }}>
-              Complete registration
+              {t('register.completeRegistration')}
             </Button>
           </div>
         </div>

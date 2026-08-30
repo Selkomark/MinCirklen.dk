@@ -1,6 +1,5 @@
 import type { Database } from '@mincirklen/shared'
-import type { Kysely } from 'kysely'
-import { advanceTurn } from './sessionRepository'
+import { sql, type Kysely } from 'kysely'
 import { insertModerationEvent } from './moderationEventRepository'
 
 export interface MessageRow {
@@ -40,21 +39,82 @@ export async function insertMessage(
   return toMessageRow(row)
 }
 
-export async function listMessages(db: Kysely<Database>, sessionId: string): Promise<MessageRow[]> {
-  const rows = await db
-    .selectFrom('messages')
-    .selectAll()
-    .where('session_id', '=', sessionId)
-    .orderBy('created_at', 'asc')
-    .execute()
-
-  return rows.map(toMessageRow)
+export interface ListMessagesParams {
+  sessionId: string
+  // Omitted means "give me the latest page" — see the function doc
+  // comment below for why that's the same query as any other page, not
+  // a special case.
+  cursor?: string
+  limit: number
 }
 
-// Atomic: persist the message, log the passing classification, and hand
-// the turn to the next user — all in one transaction, so a failure
-// partway through can't leave the room in a state where a message exists
-// but the turn never advanced (or vice versa).
+export interface ListMessagesResult {
+  messages: MessageRow[]
+  // Cursor to fetch the page of messages immediately OLDER than this
+  // page's oldest row. Null means this page already reaches the start of
+  // the session's history — nothing older exists.
+  nextCursor: string | null
+}
+
+function parseMessageCursor(cursor: string): { value: string; id: string } {
+  const [value, id] = cursor.split('|')
+  if (value === undefined || !id) throw new Error(`invalid cursor: ${cursor}`)
+  return { value, id }
+}
+
+// Unidirectional (see listMessagesInputSchema's doc comment) — unlike
+// sessionRepository.ts's listOpenSessions, there's no `direction`. Every
+// call is "the page immediately before this cursor," always queried
+// newest-first (so LIMIT grabs the rows closest to the cursor) and
+// reversed back to ascending/oldest-first — the natural chat reading
+// order — before returning. Omitting the cursor is exactly the same
+// query with no WHERE-cursor filter, which is also exactly "the latest
+// page" — no synthetic anchor cursor needed the way listOpenSessions
+// needs one to anchor its first fetch near "now".
+export async function listMessages(db: Kysely<Database>, params: ListMessagesParams): Promise<ListMessagesResult> {
+  let query = db
+    .selectFrom('messages')
+    .select([
+      'id',
+      'session_id',
+      'user_id',
+      'body',
+      'created_at',
+      // Text form for the cursor, same precision rationale as
+      // sessionRepository.ts's scheduled_at_cursor: created_at is
+      // timestamptz (microsecond precision), while a JS Date round-trip
+      // through toISOString() only has millisecond precision — that can
+      // duplicate or skip a boundary row across pages. Postgres's own
+      // text cast round-trips through ::timestamptz exactly.
+      sql<string>`created_at::text`.as('created_at_cursor'),
+    ])
+    .where('session_id', '=', params.sessionId)
+
+  if (params.cursor) {
+    const decoded = parseMessageCursor(params.cursor)
+    query = query.where(
+      sql<boolean>`(created_at < ${decoded.value}::timestamptz) or (created_at = ${decoded.value}::timestamptz and id < ${decoded.id})`,
+    )
+  }
+
+  const rows = await query.orderBy('created_at', 'desc').orderBy('id', 'desc').limit(params.limit + 1).execute()
+  const hasMore = rows.length > params.limit
+  const page = rows.slice(0, params.limit).reverse()
+  const oldest = page[0]
+
+  return {
+    messages: page.map(toMessageRow),
+    nextCursor: hasMore && oldest ? `${oldest.created_at_cursor}|${oldest.id}` : null,
+  }
+}
+
+// Atomic: persist the message and log the passing classification — one
+// transaction, so a failure partway through can't leave a moderation
+// event without its message or vice versa. Turn advancement is no longer
+// part of this transaction: that's now owned by websocket-service (Redis
+// is the live authority — see adapters/redisTurnStateAdapter.ts on that
+// side), and messageService.ts's sendMessage calls it explicitly via
+// SendMessageDeps.advanceTurn after this resolves.
 export async function recordPassedMessage(
   db: Kysely<Database>,
   params: { sessionId: string; userId: string; body: string },
@@ -67,24 +127,22 @@ export async function recordPassedMessage(
       messageId: message.id,
       classification: 'pass',
     })
-    await advanceTurn(trx, params.sessionId)
     return message
   })
 }
 
-// Atomic: log the flag (message never persisted — held back) and still
-// advance the turn, so a non-crisis flag doesn't stall the room.
+// Logs the flag (message never persisted — held back). Turn advancement
+// (a non-crisis flag still advances the turn, so it doesn't stall the
+// room) is likewise now owned by websocket-service — see
+// recordPassedMessage's comment above.
 export async function recordFlaggedMessage(
   db: Kysely<Database>,
   params: { sessionId: string; userId: string },
 ): Promise<void> {
-  await db.transaction().execute(async (trx) => {
-    await insertModerationEvent(trx, {
-      sessionId: params.sessionId,
-      userId: params.userId,
-      messageId: null,
-      classification: 'flag',
-    })
-    await advanceTurn(trx, params.sessionId)
+  await insertModerationEvent(db, {
+    sessionId: params.sessionId,
+    userId: params.userId,
+    messageId: null,
+    classification: 'flag',
   })
 }

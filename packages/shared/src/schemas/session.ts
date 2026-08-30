@@ -81,3 +81,17 @@ export const listOpenSessionsInputSchema = z.object({
 })
 
 export type ListOpenSessionsInput = z.infer<typeof listOpenSessionsInputSchema>
+
+// The dashboard sidebar's "recent sessions" list (DashboardPage.tsx) —
+// forward-only "load more" pagination, not the bidirectional windowed
+// scroll listOpenSessionsInputSchema backs, and no topic/date/duration/
+// capacity filters (this is a personal history list, not a browse/search
+// surface over every open circle) — just free-text search, same
+// semantics as /start/join's.
+export const listRecentVisitsInputSchema = z.object({
+  search: z.string().trim().max(100).optional(),
+  cursor: z.string().optional(),
+  limit: z.number().int().min(1).max(50).default(20),
+})
+
+export type ListRecentVisitsInput = z.infer<typeof listRecentVisitsInputSchema>

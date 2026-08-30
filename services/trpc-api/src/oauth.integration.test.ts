@@ -1,7 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { DEFAULT_LOCAL_DATABASE_URL, createDb, createPgPool, createSessionToken, runMigrations } from '@mincirklen/shared'
-import type { Redis } from 'ioredis'
-import type { NatsConnection } from 'nats'
 import { generateKeyPairSync, sign as signData } from 'node:crypto'
 import { createApp } from './app'
 import { hashIdentitySubject } from './auth/identityHash'
@@ -83,10 +81,10 @@ beforeAll(async () => {
 
   app = createApp({
     db,
-    redis: {} as Redis, // not exercised by the OAuth flow under test
-    nats: {} as NatsConnection, // not exercised by the OAuth flow under test
     authSecret: AUTH_SECRET,
     moderationServiceUrl: 'http://unused.invalid',
+    websocketServiceUrl: 'http://unused.invalid',
+    internalServiceSecret: 'oauth-integration-test-internal-secret',
     publicBaseUrl: PUBLIC_BASE_URL,
     vault: TEST_VAULT,
     identityHashKey: IDENTITY_HASH_KEY,
@@ -146,6 +144,11 @@ describe('GET /auth/callback/google', () => {
 
     const sessionCookie = findCookie(res, 'mc_session')
     expect(sessionCookie).not.toBeNull()
+    // Domain must be present so this cookie also reaches sibling
+    // subdomains like socket.dev-mincirklen.dk (websocket-service) — see
+    // the matching assertion in app.integration.test.ts.
+    const rawSessionCookie = res.headers.getSetCookie().find((c) => c.startsWith('mc_session='))
+    expect(rawSessionCookie).toContain('Domain=dev-mincirklen.dk')
 
     const linked = await db
       .selectFrom('user_identities')
@@ -361,6 +364,7 @@ describe('GET /auth/callback/google', () => {
     const sessionCookieHeader = res.headers.getSetCookie().find((c) => c.startsWith('mc_session='))
     expect(sessionCookieHeader).toBeDefined()
     expect(sessionCookieHeader).toContain('Max-Age=0')
+    expect(sessionCookieHeader).toContain('Domain=dev-mincirklen.dk')
   })
 })
 
@@ -368,10 +372,10 @@ describe('when Google login is not configured', () => {
   test('both routes return 503', async () => {
     const unconfiguredApp = createApp({
       db,
-      redis: {} as Redis,
-      nats: {} as NatsConnection,
       authSecret: AUTH_SECRET,
       moderationServiceUrl: 'http://unused.invalid',
+      websocketServiceUrl: 'http://unused.invalid',
+      internalServiceSecret: 'oauth-integration-test-internal-secret',
       publicBaseUrl: PUBLIC_BASE_URL,
       vault: TEST_VAULT,
       identityHashKey: IDENTITY_HASH_KEY,

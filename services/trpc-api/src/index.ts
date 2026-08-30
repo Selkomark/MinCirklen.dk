@@ -1,19 +1,6 @@
 import { createDb, createPgPool, runMigrations } from '@mincirklen/shared'
-import { Redis } from 'ioredis'
-import { connect } from 'nats'
 import { createApp } from './app'
 import type { KmsConfig } from './adapters/kmsAdapter'
-
-const redis = new Redis({
-  host: process.env.REDIS_HOST ?? 'redis',
-  port: Number(process.env.REDIS_PORT ?? 6379),
-  lazyConnect: true,
-})
-// Without a listener, ioredis's connection-retry errors print as noisy
-// "Unhandled error event" spam (e.g. while waiting for the redis container
-// to come up in docker compose) — /health already surfaces connectivity
-// problems, so this just keeps the log quiet.
-redis.on('error', () => {})
 
 // Never `public` — see packages/shared/src/db/pool.ts and docs/local_dev.md.
 const dbSchema = process.env.DB_SCHEMA ?? 'dev'
@@ -55,19 +42,19 @@ if (!identityHashKey) {
   throw new Error('IDENTITY_HASH_KEY is required')
 }
 
-await runMigrations(db, dbSchema)
+const internalServiceSecret = process.env.INTERNAL_SERVICE_SECRET
+if (!internalServiceSecret) {
+  throw new Error('INTERNAL_SERVICE_SECRET is required')
+}
 
-// Unlike Redis above, NATS is load-bearing for the send pipeline (message
-// fanout) — an instance that can't publish shouldn't report itself healthy,
-// so a boot-time connection failure is fatal rather than swallowed.
-const nats = await connect({ servers: process.env.NATS_URL ?? 'nats://nats:4222' })
+await runMigrations(db, dbSchema)
 
 const app = createApp({
   db,
-  redis,
-  nats,
   authSecret,
   moderationServiceUrl: process.env.MODERATION_SVC_URL ?? 'http://moderation-service:8082',
+  websocketServiceUrl: process.env.WEBSOCKET_SERVICE_URL ?? 'http://websocket-service:8080',
+  internalServiceSecret,
   publicBaseUrl: process.env.PUBLIC_BASE_URL ?? 'https://dev-mincirklen.dk',
   vault: kms,
   identityHashKey,
