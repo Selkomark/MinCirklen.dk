@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from 'react'
+import * as Sentry from '@sentry/react'
 import { ErrorPage } from './pages/ErrorPage'
 import i18n from './i18n'
 
@@ -25,15 +26,27 @@ export class ErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: unknown, info: { componentStack?: string | null }) {
     console.error('[ErrorBoundary] unexpected render error', error, info.componentStack)
+    Sentry.captureReactException(error, info)
+
+    // Usually already loaded by the time a real crash happens (every
+    // namespace, including "errors", is preloaded eagerly — see i18n.ts's
+    // `ns: NAMESPACES`) — but each namespace's resource file is still an
+    // async dynamic import (i18n.ts's resourcesToBackend), so a crash on
+    // the very first render can beat it, rendering the literal
+    // "errors:boundary.title" key instead of real text. Waits for the
+    // load, then re-renders once it lands.
+    if (!i18n.hasLoadedNamespace('errors')) {
+      void i18n.loadNamespaces('errors').then(() => this.forceUpdate())
+    }
   }
 
   render() {
     if (this.state.hasError) {
       // A class component, not `useTranslation` — reads the i18next
-      // singleton directly. Every namespace (including "errors") is
-      // preloaded eagerly at init (see i18n.ts's `ns: NAMESPACES`), so by
-      // the time a real runtime crash can happen this is already resolved;
-      // this doesn't need the hook's re-render-on-load subscription.
+      // singleton directly, since this must render before React itself
+      // has necessarily settled (see componentDidCatch's forceUpdate for
+      // the one case where the singleton's data arrives after this first
+      // renders).
       return (
         <ErrorPage code={500} title={i18n.t('errors:boundary.title')} message={i18n.t('errors:boundary.message')} />
       )

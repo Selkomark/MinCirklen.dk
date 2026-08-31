@@ -251,6 +251,60 @@ completing successfully before it starts.
   `trpc-api`/`websocket-service`'s `VAULT_TOKEN` env var never has to
   change across a fresh init.
 
+### Error/log tracking (`glitchtip`, `glitchtip-redis`, `glitchtip-db-init`, `glitchtip-init`)
+
+`docker-compose.yml` runs a self-hosted [GlitchTip](https://glitchtip.com/)
+instance — an open-source, MIT-licensed, Sentry-SDK-compatible error/log/
+performance tracker. Chosen specifically to avoid Sentry SaaS's per-seat/
+per-event pricing while staying wire-compatible with the `@sentry/*` SDKs.
+One project per service, all under the same org (`local-infra/glitchtip/init.py`):
+`web-app` (browser, `@sentry/react`, reached via Caddy at
+`glitchtip.dev-mincirklen.dk` — see `.agents/skills/dev-domains/SKILL.md`),
+and `trpc-api`/`websocket-service`/`moderation-service` (`@sentry/bun` +
+`@sentry/hono`, reached container-to-container over plain HTTP at
+`glitchtip:8000` — the mkcert CA behind the public HTTPS domain is only
+trusted by the host/browser, not by any container, so a backend SDK using
+the public domain fails TLS verification; see `init.py`'s own comment). A
+production deployment on the same GKE Autopilot cluster used for
+`websocket-service` is planned (`IaC/`) but not yet built.
+
+- **Image trust**: `glitchtip/glitchtip` (tag `6`) — the project's own
+  official image, published under their own Docker Hub org, matching
+  exactly what their own install docs
+  (`https://glitchtip.com/assets/compose.sample.yml`) reference. Not a
+  Docker-Official-Images-library or verified-publisher image, but a real,
+  actively maintained project (GlitchTip 6 shipped February 2026, MIT
+  license, genuine adoption) — vetted per
+  `.claude/skills/security-guard`, same trust tier as `nats-nui` above.
+  Pinned by digest
+  (`sha256:a3d8eb1b36c1e1603d55ab32711ea3dd8115874742a781a57391a62a16e0dff6`),
+  same convention as the other pinned images in this file.
+- **Data**: its own database inside the shared `postgres` container
+  (created once by the one-shot `glitchtip-db-init`, idempotent — same
+  "create if missing" shape as `vault-init` below, just for a database
+  instead of a Vault token) rather than a second Postgres container — pure
+  cost/footprint reuse, mirrors the plan for the real Cloud SQL instance
+  in prod. Its own dedicated `glitchtip-redis` (no volume — Celery
+  broker/cache data is disposable), deliberately **not** sharing the app's
+  own `redis` above, which is correctness-critical live turn/roster/
+  presence state that shouldn't take on unrelated queue traffic.
+- **No auth of their own to reach the network path** (same as the
+  data-store admin UIs above) — GlitchTip has its own login/signup
+  screen once you reach it, but nothing gates reaching that screen beyond
+  network access to the developer's machine/LAN. Acceptable under the
+  same throwaway-local-data reasoning as the rest of this stack.
+- **Secrets**: `SECRET_KEY: dev-only-not-for-production` — a throwaway
+  local value, same convention as `AUTH_SECRET`/`VAULT_TOKEN` elsewhere in
+  this file, not a real secret.
+- **`glitchtip-init`**: one-shot service (`local-infra/glitchtip/init.py`,
+  run via `manage.py shell`) that scripts the manual signup/org/team/
+  project/DSN-copy flow GlitchTip's own getting-started UI otherwise
+  requires by hand — idempotent (`get_or_create` throughout), same
+  "safe on every `docker compose up`" shape as `vault-init`. Creates a
+  superuser at `GLITCHTIP_INIT_EMAIL`/`GLITCHTIP_INIT_PASSWORD`
+  (`admin@dev-mincirklen.dk` / `dev-only-not-for-production-1`) — same
+  throwaway-local-credential posture as `SECRET_KEY` above.
+
 ### Optional VPN (`vpn` service)
 
 `docker-compose.yml` includes an optional, profile-gated WireGuard service

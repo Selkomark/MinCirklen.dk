@@ -76,3 +76,14 @@ variable "websocket_health_check_path" {
   type        = string
   default     = "/healthz"
 }
+
+variable "glitchtip_service_port" {
+  description = "Port the glitchtip Kubernetes Service (modules/glitchtip) listens on."
+  type        = number
+  default     = 8000
+}
+
+variable "glitchtip_health_check_path" {
+  type    = string
+  default = "/_health/"
+}

@@ -71,6 +71,18 @@ resource "google_service_account" "websocket_service" {
   display_name = "WebSocket service (${local.environment})"
 }
 
+# Self-hosted error/log tracking (SECURITY.md's "Error/log tracking"
+# section) — a GKE workload like websocket-service above, but entirely
+# Terraform-managed (modules/glitchtip), not deployed by a separate
+# app-repo pipeline, so this GSA only needs to exist here for Workload
+# Identity + Cloud SQL IAM auth + Secret Manager access, no cross-module
+# cycle to avoid.
+resource "google_service_account" "glitchtip" {
+  project      = var.project_id
+  account_id   = "glitchtip-${local.environment}"
+  display_name = "GlitchTip (${local.environment})"
+}
+
 module "secrets" {
   source = "../../modules/secrets"
 
@@ -80,11 +92,17 @@ module "secrets" {
   # The moderation service's config reference is the one secret the tech
   # spec names explicitly (section 3); add more here as real services need
   # them, rather than pre-guessing names nothing reads yet.
-  secret_ids = ["moderation-service-config-ref"]
+  # glitchtip-secret-key: Django's SECRET_KEY, fetched at pod startup by
+  # modules/glitchtip's init container — see that module's own comment on
+  # why this isn't a Kubernetes-native Secret instead.
+  secret_ids = ["moderation-service-config-ref", "glitchtip-secret-key"]
 
   accessor_bindings = {
     "moderation-service-config-ref" = [
       "serviceAccount:${google_service_account.moderation_service.email}",
+    ]
+    "glitchtip-secret-key" = [
+      "serviceAccount:${google_service_account.glitchtip.email}",
     ]
   }
 }
@@ -196,7 +214,19 @@ module "cloud_sql" {
   iam_service_accounts = [
     google_service_account.trpc_api.email,
     google_service_account.websocket_service.email,
+    google_service_account.glitchtip.email,
   ]
+}
+
+# A second database on the same shared instance — pure cost/footprint
+# reuse (see SECURITY.md's "Error/log tracking" section), not a second
+# Cloud SQL instance. modules/cloud-sql only ever creates its own primary
+# "app" database internally, so this is a plain resource here rather than
+# a change to that module's interface.
+resource "google_sql_database" "glitchtip" {
+  project  = var.project_id
+  name     = "glitchtip"
+  instance = module.cloud_sql.instance_name
 }
 
 module "redis" {
@@ -208,4 +238,39 @@ module "redis" {
   use_memorystore = false # self-hosted per section 8.3's cost analysis
 
   storage_size = "20Gi"
+}
+
+# GlitchTip's own Celery broker/cache — deliberately not sharing the app's
+# `redis` above (that one is correctness-critical live turn/roster/
+# presence state; this one is disposable queue data). Same self-hosted
+# module, different namespace so the two StatefulSets/Services don't
+# collide, much smaller since it holds nothing durable.
+module "glitchtip_redis" {
+  source = "../../modules/redis"
+
+  project_id      = var.project_id
+  region          = var.region
+  environment     = local.environment
+  use_memorystore = false
+  namespace       = "glitchtip-redis"
+  storage_size    = "5Gi"
+}
+
+module "glitchtip" {
+  source = "../../modules/glitchtip"
+
+  project_id            = var.project_id
+  region                = var.region
+  environment           = local.environment
+  image                 = var.glitchtip_image
+  domain                = "https://glitchtip.${var.domain}"
+  service_account_email = google_service_account.glitchtip.email
+
+  cloud_sql_instance_connection_name = module.cloud_sql.instance_connection_name
+  database_name                      = google_sql_database.glitchtip.name
+
+  redis_host = module.glitchtip_redis.host
+  redis_port = module.glitchtip_redis.port
+
+  secret_manager_secret_id = module.secrets.secret_ids["glitchtip-secret-key"]
 }

@@ -1,7 +1,10 @@
-// Single public entry point across all three subdomains (section 6.1):
+// Single public entry point across the app's subdomains (section 6.1):
 // mincirklen.dk (web-app SSR), trpc.mincirklen.dk (tRPC API), and
 // socket.mincirklen.dk (WebSocket service) — host-based routing off one
 // global external HTTPS LB, one managed cert, one static IP.
+// glitchtip.mincirklen.dk (self-hosted error/log tracking, SECURITY.md)
+// rides the same LB — not part of the original tech-spec topology, but
+// the identical pattern as the WebSocket backend below.
 
 resource "google_compute_global_address" "lb_ip" {
   project = var.project_id
@@ -17,6 +20,7 @@ resource "google_compute_managed_ssl_certificate" "lb_cert" {
       var.domain,
       "trpc.${var.domain}",
       "socket.${var.domain}",
+      "glitchtip.${var.domain}",
     ]
   }
 }
@@ -152,7 +156,67 @@ resource "google_compute_backend_service" "websocket" {
 }
 
 # ---------------------------------------------------------------------------
-# URL map — host-based routing to the three backends above.
+# GlitchTip backend — same container-native NEG routing shape as the
+# WebSocket backend above, except modules/glitchtip's Deployment/Service
+# are Terraform-managed (unlike websocket-service, deployed by a separate
+# app-repo pipeline), so both the NEG name here and the Kubernetes
+# Service's `cloud.google.com/neg` annotation are written together, in
+# this same change — they have to stay in exact sync. One NEG per zone,
+# all sharing the same name (varying only by zone), per GKE's documented
+# standalone-NEG contract: the Service annotation gives a single name,
+# and GKE's NEG controller creates one real NEG per zone using exactly
+# that name, then populates each with that zone's pod endpoints.
+# ---------------------------------------------------------------------------
+
+resource "google_compute_network_endpoint_group" "glitchtip" {
+  for_each = toset(data.google_compute_zones.available.names)
+
+  project      = var.project_id
+  name         = "glitchtip-neg-${var.environment}"
+  zone         = each.value
+  network      = google_compute_network.vpc.id
+  subnetwork   = google_compute_subnetwork.public.id
+  default_port = var.glitchtip_service_port
+
+  network_endpoint_type = "GCE_VM_IP_PORT"
+}
+
+resource "google_compute_health_check" "glitchtip" {
+  project = var.project_id
+  name    = "glitchtip-health-${var.environment}"
+
+  http_health_check {
+    port         = var.glitchtip_service_port
+    request_path = var.glitchtip_health_check_path
+  }
+
+  check_interval_sec = 10
+  timeout_sec        = 5
+}
+
+resource "google_compute_backend_service" "glitchtip" {
+  project     = var.project_id
+  name        = "glitchtip-backend-${var.environment}"
+  protocol    = "HTTP"
+  timeout_sec = 30
+
+  health_checks = [google_compute_health_check.glitchtip.id]
+
+  dynamic "backend" {
+    for_each = google_compute_network_endpoint_group.glitchtip
+    content {
+      group = backend.value.id
+    }
+  }
+
+  log_config {
+    enable      = true
+    sample_rate = var.environment == "prod" ? 0.1 : 1.0
+  }
+}
+
+# ---------------------------------------------------------------------------
+# URL map — host-based routing to the four backends above.
 # ---------------------------------------------------------------------------
 
 resource "google_compute_url_map" "https" {
@@ -171,6 +235,10 @@ resource "google_compute_url_map" "https" {
   host_rule {
     hosts        = ["socket.${var.domain}"]
     path_matcher = "socket"
+  }
+  host_rule {
+    hosts        = ["glitchtip.${var.domain}"]
+    path_matcher = "glitchtip"
   }
 
   path_matcher {
@@ -207,6 +275,10 @@ resource "google_compute_url_map" "https" {
   path_matcher {
     name            = "socket"
     default_service = google_compute_backend_service.websocket.id
+  }
+  path_matcher {
+    name            = "glitchtip"
+    default_service = google_compute_backend_service.glitchtip.id
   }
 }
 

@@ -58,6 +58,14 @@ https://nats.dev-mincirklen.dk {
 	reverse_proxy nats-nui:31311
 }
 
-http://dev-mincirklen.dk, http://trpc.dev-mincirklen.dk, http://socket.dev-mincirklen.dk, http://pg.dev-mincirklen.dk, http://redis.dev-mincirklen.dk, http://nats.dev-mincirklen.dk {
+# Self-hosted error/log tracking (GlitchTip) — see SECURITY.md's
+# "Error/log tracking" section. Not published to a host port either, same
+# posture as the admin UIs above.
+https://glitchtip.dev-mincirklen.dk {
+	tls /certs/dev-mincirklen.dk.pem /certs/dev-mincirklen.dk-key.pem
+	reverse_proxy glitchtip:8000
+}
+
+http://dev-mincirklen.dk, http://trpc.dev-mincirklen.dk, http://socket.dev-mincirklen.dk, http://pg.dev-mincirklen.dk, http://redis.dev-mincirklen.dk, http://nats.dev-mincirklen.dk, http://glitchtip.dev-mincirklen.dk {
 	redir https://{host}{uri} permanent
 }

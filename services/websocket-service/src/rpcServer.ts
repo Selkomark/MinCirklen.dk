@@ -1,6 +1,7 @@
 import { fastify, type FastifyInstance } from 'fastify'
+import * as Sentry from '@sentry/bun'
 import { fastifyConnectPlugin } from '@connectrpc/connect-fastify'
-import { Code, ConnectError, type ConnectRouter } from '@connectrpc/connect'
+import { Code, ConnectError, type ConnectRouter, type Interceptor } from '@connectrpc/connect'
 import { InternalService } from '@mincirklen/proto'
 import { PRESENCE_STALE_AFTER_SECONDS, TURN_CLAIM_STALE_AFTER_SECONDS } from '@mincirklen/shared'
 import type { AppEnv } from './context'
@@ -55,6 +56,29 @@ function toConnectError(err: unknown): ConnectError {
   if (err instanceof NotYourTurnError) return new ConnectError(err.message, Code.PermissionDenied)
   if (err instanceof TurnAlreadyClaimedError) return new ConnectError(err.message, Code.AlreadyExists)
   throw err
+}
+
+// fastifyConnectPlugin catches every handler's thrown error itself, to
+// format the Connect-protocol wire response — it never lets one escape
+// as a Fastify-level exception, so Sentry.setupFastifyErrorHandler below
+// never sees these (same reason trpc-api's app.ts needs its own onError
+// hook instead of relying on the generic Hono middleware). An
+// interceptor runs *inside* that boundary, before the error is
+// swallowed. Only reports the unexpected case: the three ConnectErrors
+// toConnectError deliberately produces are handled business outcomes
+// (session gone, not your turn, already claimed), not crashes — same
+// "expected vs. actually broke" distinction sessionRouter.ts's own
+// toTRPCError draws on the trpc-api side of this exact call.
+const EXPECTED_CODES: Code[] = [Code.NotFound, Code.PermissionDenied, Code.AlreadyExists]
+
+const sentryInterceptor: Interceptor = (next) => async (req) => {
+  try {
+    return await next(req)
+  } catch (err) {
+    const isExpected = err instanceof ConnectError && EXPECTED_CODES.includes(err.code)
+    if (!isExpected) Sentry.captureException(err)
+    throw err
+  }
 }
 
 function routes(env: AppEnv) {
@@ -185,13 +209,19 @@ function routes(env: AppEnv) {
 export function createRpcServer(env: AppEnv): FastifyInstance {
   const server = fastify()
 
+  // Reuses the single process-wide Sentry client app.ts's sentry()
+  // middleware already initialized (including fastifyIntegration) —
+  // this just wires error capture onto this specific Fastify instance,
+  // it doesn't re-init.
+  Sentry.setupFastifyErrorHandler(server)
+
   server.addHook('onRequest', async (request, reply) => {
     if (request.headers[INTERNAL_SECRET_HEADER] !== env.internalServiceSecret) {
       await reply.code(403).send('forbidden')
     }
   })
 
-  server.register(fastifyConnectPlugin, { routes: routes(env) })
+  server.register(fastifyConnectPlugin, { routes: routes(env), interceptors: [sentryInterceptor] })
 
   return server
 }

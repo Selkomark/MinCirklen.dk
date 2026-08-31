@@ -37,3 +37,12 @@ variable "moderation_service_image" {
   type    = string
   default = null
 }
+
+# Not this repo's own build artifact (no CI pipeline pushes it) — unlike
+# the three images above, defaults straight to the real pinned image,
+# same digest docker-compose.yml uses locally. See SECURITY.md's
+# "Error/log tracking" section for why this exact digest is trusted.
+variable "glitchtip_image" {
+  type    = string
+  default = "glitchtip/glitchtip@sha256:a3d8eb1b36c1e1603d55ab32711ea3dd8115874742a781a57391a62a16e0dff6" # 6
+}

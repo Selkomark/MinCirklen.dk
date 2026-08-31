@@ -4,7 +4,7 @@ import { DEFAULT_LOCAL_DATABASE_URL, createDb, createPgPool, runMigrations } fro
 import { sql } from 'kysely'
 import { Code, ConnectError, type ConnectRouter } from '@connectrpc/connect'
 import { connectNodeAdapter } from '@connectrpc/connect-node'
-import { InternalService } from '@mincirklen/proto'
+import { InternalService, ModerationService } from '@mincirklen/proto'
 import { createApp } from './app'
 import { linkIdentity } from './repositories/userIdentityRepository'
 import { upsertUserProfile } from './repositories/userProfileRepository'
@@ -21,7 +21,8 @@ const VAULT = {
 }
 const INTERNAL_SERVICE_SECRET = 'session-integration-test-internal-secret'
 
-let fakeModerationService: ReturnType<typeof Bun.serve>
+let fakeModerationService: http.Server
+let fakeModerationServicePort: number
 let fakeWebsocketService: http.Server
 let fakeWebsocketServicePort: number
 let app: ReturnType<typeof createApp>
@@ -101,25 +102,29 @@ beforeAll(async () => {
 
   // The real moderation-service is intentionally not published to the host
   // (see docs/local_dev.md), and it only ever returns 'pass' anyway — this
-  // in-process fake stands in for it so classifyMessage's real HTTP round
-  // trip is still exercised, without touching docker-compose port publishing.
-  // Body-triggered classification, mirroring the real moderation-service's
-  // request/response contract exactly (unlike the real stub, this fake
-  // can return flag/crisis too — real moderation logic is proprietary and
-  // permanently a "pass"-only stub, so this is the only way to exercise
-  // sessionRouter's flag/crisis wiring against a real HTTP round trip
-  // rather than only via messageService's mocked unit tests).
-  fakeModerationService = Bun.serve({
-    port: 0,
-    async fetch(req) {
-      const url = new URL(req.url)
-      if (url.pathname === '/classify') {
-        const { message } = (await req.json()) as { message: string }
-        const result = message === 'FLAG_ME' ? 'flag' : message === 'CRISIS_ME' ? 'crisis' : 'pass'
-        return Response.json({ result })
-      }
-      return new Response('not found', { status: 404 })
-    },
+  // in-process fake stands in for it so classifyMessage's real Connect RPC
+  // round trip is still exercised, without touching docker-compose port
+  // publishing. Body-triggered classification, mirroring the real
+  // moderation-service's request/response contract exactly (unlike the
+  // real stub, this fake can return flag/crisis too — real moderation
+  // logic is proprietary and permanently a "pass"-only stub, so this is
+  // the only way to exercise sessionRouter's flag/crisis wiring against a
+  // real Connect round trip rather than only via messageService's mocked
+  // unit tests).
+  const moderationHandler = connectNodeAdapter({
+    routes: (router: ConnectRouter) =>
+      router.service(ModerationService, {
+        async classify(req) {
+          const result = req.message === 'FLAG_ME' ? 'flag' : req.message === 'CRISIS_ME' ? 'crisis' : 'pass'
+          return { result }
+        },
+      }),
+  })
+  fakeModerationService = http.createServer(moderationHandler)
+  fakeModerationServicePort = await new Promise<number>((resolve) => {
+    fakeModerationService.listen(0, '127.0.0.1', () => {
+      resolve((fakeModerationService.address() as { port: number }).port)
+    })
   })
 
   // Stands in for websocket-service's whole InternalService RPC surface —
@@ -206,7 +211,7 @@ beforeAll(async () => {
   app = createApp({
     db,
     authSecret: 'session-integration-test-secret',
-    moderationServiceUrl: `http://localhost:${fakeModerationService.port}`,
+    moderationServiceUrl: `http://127.0.0.1:${fakeModerationServicePort}`,
     websocketServiceUrl: `http://127.0.0.1:${fakeWebsocketServicePort}`,
     internalServiceSecret: INTERNAL_SERVICE_SECRET,
     publicBaseUrl: 'https://dev-mincirklen.dk',
@@ -216,7 +221,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  fakeModerationService.stop()
+  await new Promise<void>((resolve, reject) => fakeModerationService.close((err) => (err ? reject(err) : resolve())))
   await new Promise<void>((resolve, reject) => fakeWebsocketService.close((err) => (err ? reject(err) : resolve())))
   await db.destroy()
 })

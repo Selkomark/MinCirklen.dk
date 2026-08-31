@@ -11,6 +11,7 @@ Local dev for this repo is routed through Caddy with real hostnames (TLS via mkc
 - `https://pg.dev-mincirklen.dk` — adminer (Postgres admin UI)
 - `https://redis.dev-mincirklen.dk` — redisinsight
 - `https://nats.dev-mincirklen.dk` — nats-nui
+- `https://glitchtip.dev-mincirklen.dk` — glitchtip (error/log tracking)
 
 This applies to browser automation, curl/fetch checks, and any callback or redirect URL you configure (e.g. OAuth) — the Google OAuth callback is registered as `https://dev-mincirklen.dk/api/auth/callback/google`, so `localhost` won't work for auth flows.
 

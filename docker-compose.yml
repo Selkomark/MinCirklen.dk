@@ -194,6 +194,10 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: dev-only-not-for-production
+      # Unset by default — same "don't report dev noise unless opted in"
+      # posture as web-app's VITE_SENTRY_DSN. See src/app.ts's sentry()
+      # middleware and local-infra/glitchtip/init.py's printed DSN.
+      SENTRY_DSN: ${TRPC_API_SENTRY_DSN:-}
     ports:
       - '8787:8787'
     volumes:
@@ -238,6 +242,11 @@ services:
       # "never public" posture as moderation-service — trpc-api reaches
       # it over the docker-compose network by service name alone.
       INTERNAL_RPC_PORT: '8081'
+      # Unset by default — see trpc-api's identical SENTRY_DSN comment
+      # above. Covers both the public Hono app (:8080) and the internal
+      # Fastify RPC listener (:8081) — one process, one Sentry client
+      # (see src/app.ts and src/rpcServer.ts).
+      SENTRY_DSN: ${WEBSOCKET_SERVICE_SENTRY_DSN:-}
     ports:
       - '8091:8080'
     volumes:
@@ -254,16 +263,24 @@ services:
 
   moderation-service:
     build:
-      context: services/moderation-service
-      dockerfile: dev.Dockerfile
+      context: .
+      dockerfile: services/moderation-service/dev.Dockerfile
     container_name: mincirklen-moderation-service
     restart: unless-stopped
     environment:
       PORT: '8082'
+      # Speaks Connect/Protobuf, not REST, like every other internal call —
+      # see ARCHITECTURE.md's "Internal service-to-service calls" section
+      # and rpcServer.ts. Must match trpc-api's own value below.
+      INTERNAL_SERVICE_SECRET: dev-only-not-for-production
+      # Unset by default — see trpc-api's identical SENTRY_DSN comment
+      # above.
+      SENTRY_DSN: ${MODERATION_SERVICE_SENTRY_DSN:-}
     # Not published to the host — mirrors the cloud architecture, where
     # moderation-service is never public and is only reached service-to-service.
     volumes:
-      - ./services/moderation-service/src:/app/src
+      - ./services/moderation-service/src:/app/services/moderation-service/src
+      - ./packages/proto/src:/app/packages/proto/src
 
   web-app:
     build:
@@ -271,11 +288,107 @@ services:
       dockerfile: dev.Dockerfile
     container_name: mincirklen-web-app
     restart: unless-stopped
+    environment:
+      # Vite only exposes VITE_-prefixed vars to client code, and unset is
+      # a valid, deliberate default — see src/sentry.ts's own comment.
+      VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
     ports:
       - '5190:5190'
     volumes:
       - ./services/web-app:/app
       - mincirklen-web-app-node-modules:/app/node_modules
+
+  # Self-hosted error/log tracking (GlitchTip — Sentry-SDK-compatible, see
+  # SECURITY.md's "Error/log tracking" section for image trust/exposure
+  # notes). Its own database inside the shared postgres instance
+  # (glitchtip-db-init creates it, same cost-reuse reasoning as
+  # IaC/environments/prod's Cloud SQL plan) and its own dedicated Redis,
+  # kept separate from the app's own correctness-critical `redis` above —
+  # see that service's own comment on why that one shouldn't take on
+  # unrelated traffic.
+
+  glitchtip-redis:
+    image: redis:7-alpine
+    container_name: mincirklen-glitchtip-redis
+    restart: unless-stopped
+    # No volume — Celery broker/cache data is disposable, unlike `redis`
+    # above (which persists turn/roster/presence state via AOF).
+
+  glitchtip-db-init:
+    image: postgres:16-alpine
+    container_name: mincirklen-glitchtip-db-init
+    restart: 'no'
+    environment:
+      PG_ADMIN_URL: postgres://mincirklen:mincirklen@postgres:5432/mincirklen
+    entrypoint: ['sh', '-c']
+    command:
+      - |
+        set -e
+        EXISTS=$$(psql "$$PG_ADMIN_URL" -tAc "SELECT 1 FROM pg_database WHERE datname = 'glitchtip'")
+        if [ "$$EXISTS" != "1" ]; then
+          echo "First run: creating the glitchtip database..."
+          psql "$$PG_ADMIN_URL" -c "CREATE DATABASE glitchtip"
+        fi
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  glitchtip:
+    image: glitchtip/glitchtip@sha256:a3d8eb1b36c1e1603d55ab32711ea3dd8115874742a781a57391a62a16e0dff6 # 6
+    container_name: mincirklen-glitchtip
+    restart: unless-stopped
+    environment:
+      SERVER_ROLE: all_in_one # single process (web + worker + beat) — plenty for local dev, matches the prod plan
+      DATABASE_URL: postgres://mincirklen:mincirklen@postgres:5432/glitchtip
+      VALKEY_URL: redis://glitchtip-redis:6379
+      SECRET_KEY: dev-only-not-for-production
+      GLITCHTIP_DOMAIN: https://glitchtip.dev-mincirklen.dk
+      EMAIL_URL: consolemail:// # prints emails (invites, alerts) to this container's logs instead of sending them
+      DEFAULT_FROM_EMAIL: glitchtip@dev-mincirklen.dk
+      # web-app's Sentry SDK sends logs (see src/sentry.ts's enableLogs +
+      # consoleLoggingIntegration) — silently dropped server-side unless
+      # this is on.
+      GLITCHTIP_ENABLE_LOGS: 'True'
+    depends_on:
+      glitchtip-db-init:
+        condition: service_completed_successfully
+      glitchtip-redis:
+        condition: service_started
+    volumes:
+      - mincirklen-glitchtip-uploads:/code/uploads
+
+  # Scripts the manual "sign up, create an org/team/project, copy the DSN"
+  # flow (local-infra/glitchtip/init.py) — idempotent, same one-shot
+  # pattern as vault-init above. Retries briefly since it depends on
+  # `glitchtip`'s own migrations having finished, which this doesn't
+  # otherwise wait on precisely (service_started only means the process
+  # launched, not that migrations are done — same tolerance for eventual
+  # consistency this repo already has elsewhere for startup ordering).
+  glitchtip-init:
+    image: glitchtip/glitchtip@sha256:a3d8eb1b36c1e1603d55ab32711ea3dd8115874742a781a57391a62a16e0dff6 # 6
+    container_name: mincirklen-glitchtip-init
+    restart: 'no'
+    environment:
+      DATABASE_URL: postgres://mincirklen:mincirklen@postgres:5432/glitchtip
+      VALKEY_URL: redis://glitchtip-redis:6379
+      SECRET_KEY: dev-only-not-for-production
+      GLITCHTIP_DOMAIN: https://glitchtip.dev-mincirklen.dk
+      GLITCHTIP_INIT_EMAIL: admin@dev-mincirklen.dk
+      GLITCHTIP_INIT_PASSWORD: dev-only-not-for-production-1
+    entrypoint: ['sh', '-c']
+    command:
+      - |
+        for i in $$(seq 1 10); do
+          python manage.py shell < /init/init.py && exit 0
+          echo "glitchtip not ready yet (attempt $$i/10), retrying in 3s..."
+          sleep 3
+        done
+        exit 1
+    volumes:
+      - ./local-infra/glitchtip/init.py:/init/init.py:ro
+    depends_on:
+      glitchtip:
+        condition: service_started
 
   # Dev-only admin UIs for the data stores, each reached only through Caddy
   # (no host ports published) — same trust posture as moderation-service.
@@ -390,3 +503,4 @@ volumes:
   mincirklen-vpn-data:
   mincirklen-redisinsight-data:
   mincirklen-nats-nui-data:
+  mincirklen-glitchtip-uploads:

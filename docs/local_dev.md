@@ -95,6 +95,20 @@ Or skip DNS entirely and hit containers directly on the host:
 `adminer`, `redisinsight`, and `nats-nui` are likewise not published to the
 host — reach them only through Caddy at the subdomains above.
 
+`glitchtip` (self-hosted error/log tracking, see SECURITY.md's "Error/log
+tracking" section) is fully set up for you — the one-shot `glitchtip-init`
+service (idempotent, safe on every `docker compose up`) creates a superuser
+(`admin@dev-mincirklen.dk` / `dev-only-not-for-production-1`), an
+organization, a team, and one project per service (`web-app`, `trpc-api`,
+`websocket-service`, `moderation-service`), and prints each project's DSN.
+Find them with `docker compose logs glitchtip-init`. Setting the matching
+`.env` var (`VITE_SENTRY_DSN`, `TRPC_API_SENTRY_DSN`,
+`WEBSOCKET_SERVICE_SENTRY_DSN`, `MODERATION_SERVICE_SENTRY_DSN`) points
+that service's existing Sentry SDK at this local instance instead of real
+Sentry — note the backend three use `http://glitchtip:8000` (container-
+to-container, not the public HTTPS domain — see `init.py`'s own comment
+for why). UI at `glitchtip.dev-mincirklen.dk`.
+
 `moderation-service` is intentionally **not** published to the host, matching
 the cloud setup where it's never publicly reachable — only other containers
 on the compose network can reach it.
