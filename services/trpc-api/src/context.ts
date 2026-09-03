@@ -37,6 +37,22 @@ export function buildLogoutCookie(publicBaseUrl: string): string {
   return `${SESSION_COOKIE_NAME}=; Domain=${sessionCookieDomain(publicBaseUrl)}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`
 }
 
+// Every login/logout response must send this alongside buildSessionCookie
+// or buildLogoutCookie above. Before this file added the Domain attribute,
+// mc_session was host-only (no Domain=); a browser that got that cookie
+// pre-migration and then logs in again now ends up holding BOTH the old
+// host-only cookie and the new Domain-scoped one under the same name. A
+// browser sends both on every request (RFC 6265 puts the more specific,
+// host-only one first in the Cookie header), and getCookie() silently
+// reads that first, stale entry forever — the user is signed in
+// server-side but every request 401s, with no visible error to explain
+// why. This targets and clears exactly the pre-migration shape (no
+// Domain=) so it stops shadowing the real cookie; it's a permanent
+// no-op once a browser's legacy cookie is gone.
+export function buildLegacySessionCookieClear(): string {
+  return `${SESSION_COOKIE_NAME}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`
+}
+
 export interface AppEnv {
   db: Kysely<Database>
   authSecret: string

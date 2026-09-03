@@ -7,7 +7,7 @@ import { KmsError } from '../adapters/kmsAdapter'
 import { notifyProfileUpdated } from '../adapters/websocketServiceAdapter'
 import { createAnonymousSession } from '../services/authService'
 import { completeUserProfile } from '../services/userProfileService'
-import { buildLogoutCookie, buildSessionCookie } from '../context'
+import { buildLegacySessionCookieClear, buildLogoutCookie, buildSessionCookie } from '../context'
 import type { AppEnv } from '../context'
 import { googleLinkedProcedure, protectedProcedure, publicProcedure, router } from './trpc'
 
@@ -44,6 +44,7 @@ export const authRouter = router({
     })
 
     ctx.resHeaders.append('set-cookie', buildSessionCookie(result.token, ctx.appEnv.publicBaseUrl))
+    ctx.resHeaders.append('set-cookie', buildLegacySessionCookieClear())
 
     return result
   }),
@@ -53,6 +54,7 @@ export const authRouter = router({
   // state this is meant to end up in anyway, so there's nothing to guard.
   logout: publicProcedure.mutation(({ ctx }) => {
     ctx.resHeaders.append('set-cookie', buildLogoutCookie(ctx.appEnv.publicBaseUrl))
+    ctx.resHeaders.append('set-cookie', buildLegacySessionCookieClear())
     return { ok: true }
   }),
 

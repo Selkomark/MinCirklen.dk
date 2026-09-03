@@ -31,7 +31,13 @@ afterAll(async () => {
 })
 
 function extractCookie(res: Response): string {
-  const setCookie = res.headers.get('set-cookie')
+  // Login/logout now emit a second set-cookie header alongside mc_session
+  // itself, clearing a legacy pre-Domain variant of the same name (see
+  // buildLegacySessionCookieClear in context.ts) — getSetCookie() (not the
+  // singular get(), which comma-joins multiple same-name headers into one
+  // unparseable string) plus an explicit non-empty-value match is what
+  // picks out the real cookie regardless of header order.
+  const setCookie = res.headers.getSetCookie().find((c) => c.startsWith('mc_session=') && !c.startsWith('mc_session=;'))
   if (!setCookie) throw new Error('expected a set-cookie header')
   return setCookie.split(';')[0] as string
 }
@@ -56,8 +62,17 @@ describe('auth flow through the Hono app', () => {
     // handshake to a sibling subdomain like socket.dev-mincirklen.dk —
     // without it the cookie is host-only to dev-mincirklen.dk and never
     // reaches websocket-service at all. See publicBaseUrl above.
-    const setCookie = res.headers.get('set-cookie')
-    expect(setCookie).toContain('Domain=dev-mincirklen.dk')
+    const setCookies = res.headers.getSetCookie()
+    const realCookie = setCookies.find((c) => c.startsWith('mc_session=') && !c.startsWith('mc_session=;'))
+    expect(realCookie).toContain('Domain=dev-mincirklen.dk')
+
+    // A second, no-Domain mc_session clear must ride along too — see
+    // buildLegacySessionCookieClear's comment in context.ts for why a
+    // browser holding a pre-Domain cookie under the same name would
+    // otherwise silently shadow this new one forever.
+    const legacyClear = setCookies.find((c) => c.startsWith('mc_session=;'))
+    expect(legacyClear).toContain('Max-Age=0')
+    expect(legacyClear).not.toContain('Domain=')
   })
 
   test('whoAmI succeeds with the issued cookie and fails without it', async () => {
