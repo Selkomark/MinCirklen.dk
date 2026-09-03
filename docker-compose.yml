@@ -173,6 +173,14 @@ services:
       PORT: '8787'
       DATABASE_URL: postgres://mincirklen:mincirklen@postgres:5432/mincirklen
       DB_SCHEMA: dev
+      # moderation-service itself no longer lives in (or builds from) this
+      # repo — the real implementation is the private, sibling
+      # MinCirklen-Moderation-Engine repo, which joins this stack's own
+      # `mincirklendk_default` network (external, from its own
+      # docker-compose.yml) and publishes itself under the
+      # `moderation-service` network alias. That repo's own stack must be
+      # up (`docker compose up -d --build` there) for this URL to resolve —
+      # nothing here builds or runs moderation-service anymore.
       MODERATION_SVC_URL: http://moderation-service:8082
       # trpc-api never talks to NATS/Redis directly — those are internal to
       # websocket-service (its own cross-pod fanout and shared memory). This
@@ -261,26 +269,9 @@ services:
       redis:
         condition: service_healthy
 
-  moderation-service:
-    build:
-      context: .
-      dockerfile: services/moderation-service/dev.Dockerfile
-    container_name: mincirklen-moderation-service
-    restart: unless-stopped
-    environment:
-      PORT: '8082'
-      # Speaks Connect/Protobuf, not REST, like every other internal call —
-      # see ARCHITECTURE.md's "Internal service-to-service calls" section
-      # and rpcServer.ts. Must match trpc-api's own value below.
-      INTERNAL_SERVICE_SECRET: dev-only-not-for-production
-      # Unset by default — see trpc-api's identical SENTRY_DSN comment
-      # above.
-      SENTRY_DSN: ${MODERATION_SERVICE_SENTRY_DSN:-}
-    # Not published to the host — mirrors the cloud architecture, where
-    # moderation-service is never public and is only reached service-to-service.
-    volumes:
-      - ./services/moderation-service/src:/app/services/moderation-service/src
-      - ./packages/proto/src:/app/packages/proto/src
+  # moderation-service is no longer built/run from this repo — see
+  # trpc-api's MODERATION_SVC_URL comment above. It's provided by the
+  # private MinCirklen-Moderation-Engine repo's own docker-compose.yml.
 
   web-app:
     build:

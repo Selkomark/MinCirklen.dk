@@ -15,7 +15,6 @@ COPY packages/proto/package.json packages/proto/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY services/websocket-service/package.json services/websocket-service/package.json
 COPY services/trpc-api/package.json services/trpc-api/package.json
-COPY services/moderation-service/package.json services/moderation-service/package.json
 RUN bun install --frozen-lockfile
 COPY packages/proto packages/proto
 COPY packages/shared packages/shared

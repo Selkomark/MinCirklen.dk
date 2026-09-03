@@ -5,8 +5,7 @@
     "packages/proto",
     "packages/shared",
     "services/trpc-api",
-    "services/websocket-service",
-    "services/moderation-service"
+    "services/websocket-service"
   ],
   "scripts": {
     "typecheck": "bun run --filter='*' typecheck",
