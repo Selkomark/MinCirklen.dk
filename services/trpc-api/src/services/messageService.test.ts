@@ -9,6 +9,8 @@ const message: MessageRow = {
   userId: 'p1',
   body: 'hello',
   type: 'user',
+  moderationStatus: 'pass',
+  falsePositiveReportedAt: null,
   createdAt: new Date('2026-01-01T00:00:00Z'),
 }
 
@@ -111,16 +113,15 @@ describe('sendMessage', () => {
     expect(calls).toEqual(['isSessionMember', 'claimTurn', 'classify', 'recordFlaggedMessage', 'advanceTurn'])
   })
 
-  test('"crisis": escalates unconditionally, never persists a message, publishes, or advances the turn', async () => {
+  test('"crisis": escalates unconditionally, never publishes, but does advance the turn', async () => {
     const { deps, calls } = trackedDeps({ classification: 'crisis' })
 
     const result = await sendMessage(deps, 'hi')
 
     expect(result).toEqual({ status: 'crisis', resource })
-    expect(calls).toEqual(['isSessionMember', 'claimTurn', 'classify', 'escalateCrisis'])
+    expect(calls).toEqual(['isSessionMember', 'claimTurn', 'classify', 'escalateCrisis', 'advanceTurn'])
     expect(calls).not.toContain('recordPassedMessage')
     expect(calls).not.toContain('publish')
-    expect(calls).not.toContain('advanceTurn')
   })
 })
 

@@ -120,6 +120,15 @@ export function submitSessionReport(sessionId: string, aboutUserIds: string[], b
   return postTrpc('session.report', { sessionId, aboutUserIds, body })
 }
 
+// The report-icon button next to the sender's own flag/crisis message
+// (SessionPage.tsx's MessageRow). Only ever touches the caller's own
+// message — the server-side guard (messageRepository.ts's
+// reportFalsePositive) is what actually enforces that, this is just the
+// client call.
+export function reportFalsePositive(sessionId: string, messageId: string): Promise<{ status: 'reported' }> {
+  return postTrpc('session.reportFalsePositive', { sessionId, messageId })
+}
+
 // Thrown specifically for a 403 — the turn isn't (or is no longer) the
 // caller's to skip. Distinguished from a generic failure so
 // SessionPage.tsx's autoSkipTurn can tell "someone/something else
@@ -347,6 +356,15 @@ export interface ChatMessage {
   // an inline system-message line rather than a real chat bubble. See
   // trpc-api's messageRepository.ts and migrations/0001_init.ts.
   type: 'user' | 'system'
+  // Anything other than 'pass' is only ever present in a message this
+  // client's own user authored — trpc-api's listMessages withholds any
+  // other classification's row from every other participant. 'reviewed_pass'
+  // means a human reviewed a flag/crisis and cleared it — distinct from
+  // 'pass' (the classifier's own original verdict), never conflate the two
+  // in the UI. See SessionPage.tsx's MessageRow for where this drives
+  // rendering.
+  moderationStatus: 'pass' | 'flag' | 'crisis' | 'reviewed_pass'
+  falsePositiveReportedAt: string | null
   createdAt: string
 }
 
@@ -524,7 +542,11 @@ export function useSessionChat(sessionId: string, enabled: boolean) {
         // message up once the send is confirmed.
         if (sendingRef.current) return
         const payload = (frame as MessageFrame).payload
-        setMessages((prev) => (prev.some((m) => m.id === payload.id) ? prev : [...prev, payload]))
+        // Live-published messages are always 'pass' — see MessageFrame's
+        // own comment for why the wire payload doesn't carry
+        // moderationStatus at all.
+        const message: ChatMessage = { ...payload, moderationStatus: 'pass', falsePositiveReportedAt: null }
+        setMessages((prev) => (prev.some((m) => m.id === message.id) ? prev : [...prev, message]))
       } else if (frame.type === 'roster-update') {
         // The WS frame only ever carries { userId, turnOrder } — it comes
         // from websocket-service/Redis, which has no idea about profile

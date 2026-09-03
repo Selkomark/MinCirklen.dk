@@ -136,7 +136,11 @@
     "sessionNotActive": "Sessionen er ikke aktiv",
     "itsYourTurn": "Det er din tur",
     "hasTheFloor": "{{name}} har ordet",
-    "waitingForNextUser": "Venter på næste bruger"
+    "waitingForNextUser": "Venter på næste bruger",
+    "onlyYouCanSeeThis": "Kun du kan se dette",
+    "reportFalsePositive": "Bed om et nyt kig",
+    "falsePositiveReported": "Vi kigger på det igen",
+    "falsePositiveReportedNotice": "Tak — vi kigger på det."
   },
   "rightPanel": {
     "essentialPages": "Vigtige sider",
@@ -144,6 +148,10 @@
     "ifInCrisis": "Hvis du er i krise",
     "crisisResources": "Kriseressourcer",
     "reportThisSession": "Rapportér denne session"
+  },
+  "crisisModal": {
+    "title": "Du er ikke alene lige nu",
+    "notice": "Det, du har skrevet her, bliver kun mellem dig og os — resten af gruppen ser det ikke. Nogen vil kigge på det bagefter, hvis det ikke behøvede at blive holdt tilbage."
   },
   "centerPanelError": {
     "errorCode": "FEJL {{code}}",

@@ -515,16 +515,30 @@ describe('session + message pipeline', () => {
     const { result } = (await res.json()) as { result: { data: { status: string } } }
     expect(result.data.status).toBe('held')
 
-    const messagesRes = await query(alice, 'session.listMessages', { sessionId })
-    const { result: messages } = (await messagesRes.json()) as { result: { data: { messages: { type: string }[] } } }
-    expect(messages.data.messages.filter((m) => m.type === 'user')).toHaveLength(0)
+    // The message is persisted now (messageRepository.ts's
+    // recordFlaggedMessage) — held back from the group, but visible back
+    // to its own author.
+    const aliceMessagesRes = await query(alice, 'session.listMessages', { sessionId })
+    const { result: aliceMessages } = (await aliceMessagesRes.json()) as {
+      result: { data: { messages: { type: string; body: string; moderationStatus: string }[] } }
+    }
+    const aliceUserMessages = aliceMessages.data.messages.filter((m) => m.type === 'user')
+    expect(aliceUserMessages).toHaveLength(1)
+    expect(aliceUserMessages[0]?.body).toBe('FLAG_ME')
+    expect(aliceUserMessages[0]?.moderationStatus).toBe('flag')
+
+    // ...but never to another member — the privacy boundary is the
+    // WHERE clause in listMessages, not a client-side hide.
+    const bobMessagesRes = await query(bob, 'session.listMessages', { sessionId })
+    const { result: bobMessages } = (await bobMessagesRes.json()) as { result: { data: { messages: { type: string }[] } } }
+    expect(bobMessages.data.messages.filter((m) => m.type === 'user')).toHaveLength(0)
 
     const stateRes = await query(alice, 'session.getState', { sessionId })
     const { result: state } = (await stateRes.json()) as { result: { data: { currentTurnUserId: string } } }
     expect(state.data.currentTurnUserId).toBe(bob.userId)
   })
 
-  test('"crisis": returns the resource card and does not advance the turn', async () => {
+  test('"crisis": returns the resource card, persists the message to its author only, and advances the turn', async () => {
     const alice = await createActor()
     const bob = await createActor()
 
@@ -542,10 +556,27 @@ describe('session + message pipeline', () => {
     expect(result.data.status).toBe('crisis')
     expect(result.data.resource.resources.length).toBeGreaterThan(0)
 
+    // Same visibility rule as a flag (messageRepository.ts's
+    // recordCrisisMessage/listMessages): persisted, visible to its own
+    // author, never to another member.
+    const aliceMessagesRes = await query(alice, 'session.listMessages', { sessionId })
+    const { result: aliceMessages } = (await aliceMessagesRes.json()) as {
+      result: { data: { messages: { type: string; body: string; moderationStatus: string }[] } }
+    }
+    const aliceUserMessages = aliceMessages.data.messages.filter((m) => m.type === 'user')
+    expect(aliceUserMessages).toHaveLength(1)
+    expect(aliceUserMessages[0]?.body).toBe('CRISIS_ME')
+    expect(aliceUserMessages[0]?.moderationStatus).toBe('crisis')
+
+    const bobMessagesRes = await query(bob, 'session.listMessages', { sessionId })
+    const { result: bobMessages } = (await bobMessagesRes.json()) as { result: { data: { messages: { type: string }[] } } }
+    expect(bobMessages.data.messages.filter((m) => m.type === 'user')).toHaveLength(0)
+
     const stateRes = await query(alice, 'session.getState', { sessionId })
     const { result: state } = (await stateRes.json()) as { result: { data: { currentTurnUserId: string } } }
-    // Turn intentionally unchanged — still Alice's.
-    expect(state.data.currentTurnUserId).toBe(alice.userId)
+    // Turn now advances the same as a flag — see messageService.ts's
+    // sendMessage comment for why this is a deliberate product decision.
+    expect(state.data.currentTurnUserId).toBe(bob.userId)
   })
 
   test('join surfaces "session full" and "session not found" through the router', async () => {

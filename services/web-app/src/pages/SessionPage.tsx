@@ -38,6 +38,7 @@ import {
   agreeToGuidelines,
   checkGuidelines,
   getSessionSummary,
+  reportFalsePositive,
   SendMessageConflictError,
   SkipTurnNotYourTurnError,
   skipTurn,
@@ -373,17 +374,40 @@ function MemberAvatar({
 // already-rendered message to redo its `formatMessageTimestamp` work
 // (a fresh Intl.DateTimeFormat construction each call) — only a message
 // whose own props actually changed re-renders.
+const FlagIcon = (
+  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M5 3v18" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    <path d="M5 4h13l-3 4 3 4H5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>
+)
+
+// A held-back (flag) or crisis message is only ever delivered back to its
+// own author — see trpc-api's listMessages. `isOwn` is therefore already
+// implied whenever moderationStatus isn't 'pass', but this still gates on
+// it explicitly rather than assuming that invariant holds forever.
+// 'reviewed_pass' is intentionally styled the same as flag/crisis, not
+// like a normal 'pass' message — it's a human override, not the
+// classifier's own verdict, and still only this user's own eyes see it.
 const MessageRow = memo(function MessageRow({
   message,
   member,
   isOwn,
   timeZone,
+  onReportFalsePositive,
+  isReported,
+  t,
 }: {
   message: ChatMessage
   member: Member
   isOwn: boolean
   timeZone: string
+  onReportFalsePositive: (messageId: string) => void
+  isReported: boolean
+  t: TFunction<'session'>
 }) {
+  const isWithheld = isOwn && message.moderationStatus !== 'pass'
+  const alreadyReported = isReported || message.falsePositiveReportedAt !== null
+
   return (
     <div style={{ display: 'flex', gap: 10, maxWidth: 560 }}>
       <MemberAvatar member={member} size={32} />
@@ -393,24 +417,44 @@ const MessageRow = memo(function MessageRow({
           <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', opacity: 0.7 }}>
             {formatMessageTimestamp(message.createdAt, timeZone)}
           </span>
+          {isWithheld && (
+            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--signal-urgent)' }}>
+              {t('composer.onlyYouCanSeeThis')}
+            </span>
+          )}
         </span>
-        <div
-          style={{
-            background: isOwn ? 'var(--accent-safe-surface)' : 'var(--surface-raised)',
-            border: '0.5px solid var(--border-subtle)',
-            borderRadius: 'var(--radius-md)',
-            padding: 'var(--space-3) var(--space-4)',
-            fontSize: 'var(--font-size-sm)',
-            color: 'var(--text-primary)',
-            lineHeight: 'var(--line-height-base)',
-            // Plain text content collapses newlines by default —
-            // without this a Shift+Enter-composed message reads
-            // back as one run-on line.
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-          }}
-        >
-          {message.body}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+          <div
+            style={{
+              background: isWithheld ? 'var(--signal-urgent-surface)' : isOwn ? 'var(--accent-safe-surface)' : 'var(--surface-raised)',
+              border: isWithheld ? '0.5px solid var(--signal-urgent)' : '0.5px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-md)',
+              padding: 'var(--space-3) var(--space-4)',
+              fontSize: 'var(--font-size-sm)',
+              color: 'var(--text-primary)',
+              lineHeight: 'var(--line-height-base)',
+              // Plain text content collapses newlines by default —
+              // without this a Shift+Enter-composed message reads
+              // back as one run-on line.
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              fontStyle: alreadyReported ? 'italic' : undefined,
+            }}
+          >
+            {/* Once reported, the original text is replaced (not just
+                the button disabled) — a visible, unmistakable "we're on
+                it" signal, so there's no reason to submit the same
+                report again. */}
+            {alreadyReported ? t('composer.falsePositiveReportedNotice') : message.body}
+          </div>
+          {isWithheld && !alreadyReported && (
+            <IconButton
+              icon={FlagIcon}
+              label={t('composer.reportFalsePositive')}
+              variant="urgent"
+              onClick={() => onReportFalsePositive(message.id)}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -462,6 +506,67 @@ function chipStyle(active: boolean): React.CSSProperties {
     fontSize: 'var(--font-size-sm)',
     fontWeight: (active ? 'var(--font-weight-bold)' : 'var(--font-weight-regular)') as unknown as number,
   }
+}
+
+// Replaces what used to be an inline <Alert> above the compose box (see
+// git history) — a modal reads as more deliberate/private for something
+// this sensitive, and gives the resource list room to breathe instead of
+// being squeezed into a thin banner. Dismissable (Esc/click-outside,
+// same as ReportSessionModal below) — the user isn't trapped in it.
+// `resource.message`/`resources` come straight from the backend
+// (crisisEscalationService.ts's buildCrisisResource, deliberately kept
+// untranslated for now — see that file's own comment on why hotline
+// data stays as-is rather than routed through i18n); only this modal's
+// own chrome (title, the explanatory note below) is translated.
+function CrisisModal({
+  resource,
+  onOpenChange,
+}: {
+  resource: CrisisResource
+  onOpenChange: (open: boolean) => void
+}) {
+  const { t } = useTranslation('session')
+
+  return (
+    <Modal isOpen onOpenChange={onOpenChange} title={t('crisisModal.title')}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+        <p style={{ margin: 0, fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)', lineHeight: 'var(--line-height-base)' }}>
+          {resource.message}
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {resource.resources.map((r) => (
+            <div
+              key={r.name}
+              style={{
+                border: '0.5px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-md)',
+                padding: 'var(--space-3) var(--space-4)',
+                fontSize: 'var(--font-size-sm)',
+              }}
+            >
+              <div style={{ fontWeight: 'var(--font-weight-medium)' as unknown as number, color: 'var(--text-primary)' }}>{r.name}</div>
+              <div style={{ color: 'var(--text-secondary)' }}>
+                {r.phone}
+                {r.url && (
+                  <>
+                    {' · '}
+                    <a href={r.url} target="_blank" rel="noopener noreferrer" className="ds-inline-link">
+                      {r.url}
+                    </a>
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <p style={{ margin: 0, fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', lineHeight: 'var(--line-height-base)' }}>
+          {t('crisisModal.notice')}
+        </p>
+      </div>
+    </Modal>
+  )
 }
 
 function ReportSessionModal({
@@ -1587,6 +1692,21 @@ function SessionCenterPanel({
   }, [draft])
   const [isSending, setIsSending] = useState(false)
   const [crisisResource, setCrisisResource] = useState<CrisisResource | null>(null)
+  // Optimistic — the actual server-side record is
+  // ChatMessage.falsePositiveReportedAt, but that only updates on the
+  // next listMessages fetch. Tracked locally so the button disables
+  // immediately rather than waiting on a round-trip.
+  const [reportedMessageIds, setReportedMessageIds] = useState<Set<string>>(new Set())
+
+  async function handleReportFalsePositive(messageId: string) {
+    setReportedMessageIds((prev) => new Set(prev).add(messageId))
+    try {
+      await reportFalsePositive(sessionId, messageId)
+      addToast(t('composer.falsePositiveReported'), { variant: 'info' })
+    } catch {
+      addToast(t('errors.sendFailed'), { variant: 'urgent' })
+    }
+  }
   const [offlinePanelOpen, setOfflinePanelOpen] = useState(false)
   const offlinePanelRef = useRef<HTMLDivElement>(null)
   // Mobile-only: the avatar row + offline dropdown above collapse into a
@@ -2213,6 +2333,9 @@ function SessionCenterPanel({
                   member={memberByUserId.get(m.userId) ?? memberFor(m.userId, roster, myUserId)}
                   isOwn={m.userId === myUserId}
                   timeZone={effectiveTimeZone}
+                  onReportFalsePositive={handleReportFalsePositive}
+                  isReported={reportedMessageIds.has(m.id)}
+                  t={t}
                 />
               ),
             )}
@@ -2248,24 +2371,12 @@ function SessionCenterPanel({
 
         <div className="dash-composer" style={{ borderTop: '0.5px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
           {crisisResource && (
-            <Alert variant="urgent">
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <span>{crisisResource.message}</span>
-                {crisisResource.resources.map((r) => (
-                  <span key={r.name}>
-                    {r.name}: {r.phone}
-                    {r.url && (
-                      <>
-                        {' · '}
-                        <a href={r.url} target="_blank" rel="noopener noreferrer" className="ds-inline-link">
-                          {r.url}
-                        </a>
-                      </>
-                    )}
-                  </span>
-                ))}
-              </div>
-            </Alert>
+            <CrisisModal
+              resource={crisisResource}
+              onOpenChange={(open) => {
+                if (!open) setCrisisResource(null)
+              }}
+            />
           )}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 'var(--font-size-xs)', color: isYourTurn ? 'var(--accent-safe)' : 'var(--text-secondary)', fontWeight: isYourTurn ? ('var(--font-weight-medium)' as unknown as number) : undefined }}>

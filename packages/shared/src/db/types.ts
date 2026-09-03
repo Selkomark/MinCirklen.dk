@@ -60,6 +60,13 @@ export interface MessagesTable {
   // messageRepository.ts's insertMessage and
   // migrations/0001_init.ts.
   type: Generated<'user' | 'system'>
+  // 'reviewed_pass' means a human reviewed a flag/crisis row and
+  // determined it wasn't warranted — distinct from 'pass' (the
+  // classifier's own original verdict). See migrations/0001_init.ts and
+  // messageRepository.ts's listMessages for the visibility rule this
+  // column drives.
+  moderation_status: Generated<'pass' | 'flag' | 'crisis' | 'reviewed_pass'>
+  false_positive_reported_at: NullableTimestamp
   created_at: Timestamp
 }
 

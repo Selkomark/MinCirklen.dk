@@ -14,12 +14,25 @@ export interface CrisisResource {
 // Pure, no dependencies — cannot fail. This is what makes the guarantee
 // unconditional: the response the sender receives never depends on any I/O
 // succeeding.
+//
+// Ordered Denmark first (primary market), then the rest of the Nordics —
+// shown in full to every user regardless of locale/session, deliberately
+// not location-inferred (Charter §4: no location tracking). Phone
+// numbers/orgs sourced and verified at the time this was written
+// (2026-09) — re-verify before any of these change, hotline info being
+// wrong is a real safety failure, not just stale content.
 export function buildCrisisResource(): CrisisResource {
   return {
     type: 'crisis_resource',
     message:
-      'It sounds like things are really hard right now. Please reach out to one of the resources below, or local emergency services if you are in immediate danger.',
-    resources: [{ name: 'Livslinien (Denmark)', phone: '70 201 201', url: 'https://livslinien.dk' }],
+      'It sounds like things are really hard right now. Please reach out to one of the resources below, or call your local emergency number if you or someone else is in immediate danger — 112 in Denmark, Sweden, Finland and Iceland, or 113 for medical emergencies in Norway.',
+    resources: [
+      { name: 'Livslinien (Denmark)', phone: '70 201 201', url: 'https://livslinien.dk' },
+      { name: 'Mind Självmordslinjen (Sweden)', phone: '90101', url: 'https://mind.se' },
+      { name: 'Mental Helse Hjelpetelefonen (Norway)', phone: '116 123', url: 'https://mentalhelse.no' },
+      { name: 'MIELI Kriisipuhelin (Finland)', phone: '09 2525 0111', url: 'https://mieli.fi' },
+      { name: 'Hjálparsími Rauða krossins (Iceland)', phone: '1717', url: 'https://www.raudikrossinn.is' },
+    ],
   }
 }
 
@@ -29,7 +42,11 @@ export interface EscalationParams {
 }
 
 export interface EscalateDeps {
-  insertModerationEvent: () => Promise<void>
+  // Persists the message body (moderation_status: 'crisis') and the
+  // moderation event, atomically — see messageRepository.ts's
+  // recordCrisisMessage. Never broadcast to the group; the sender picks
+  // it back up via their own next listMessages refresh, same as a flag.
+  recordCrisisMessage: () => Promise<void>
   // The seam a future human-paging integration hooks into — there's
   // nothing real to page yet, so this is a structured, clearly-marked log
   // line, not a fake integration.
@@ -43,7 +60,7 @@ export async function escalate(deps: EscalateDeps, params: EscalationParams): Pr
   deps.logEscalation(params)
 
   try {
-    await deps.insertModerationEvent()
+    await deps.recordCrisisMessage()
   } catch (err) {
     // Withholding the resource-card response because persistence hiccuped
     // would be a worse outcome than a logged, catchable persistence gap —

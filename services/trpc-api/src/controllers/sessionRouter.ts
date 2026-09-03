@@ -10,13 +10,14 @@ import {
   publishMessage,
   releaseTurnClaim,
 } from '../adapters/websocketServiceAdapter'
-import { insertModerationEvent } from '../repositories/moderationEventRepository'
 import { findDisplayNames } from '../repositories/userProfileRepository'
 import {
   insertMessage,
   listMessages as listMessagesRepo,
+  recordCrisisMessage,
   recordFlaggedMessage,
   recordPassedMessage,
+  reportFalsePositive as reportFalsePositiveRepo,
 } from '../repositories/messageRepository'
 import { insertSessionReport } from '../repositories/sessionReportRepository'
 import {
@@ -235,7 +236,12 @@ export const sessionRouter = router({
     if (!(await isSessionMember(ctx.appEnv.db, input.sessionId, ctx.userId))) {
       throw toTRPCError(new NotAMemberError('user is not a member of this session'))
     }
-    return listMessagesRepo(ctx.appEnv.db, { sessionId: input.sessionId, cursor: input.cursor, limit: input.limit })
+    return listMessagesRepo(ctx.appEnv.db, {
+      sessionId: input.sessionId,
+      cursor: input.cursor,
+      limit: input.limit,
+      requestingUserId: ctx.userId,
+    })
   }),
 
   sendMessage: verifiedProcedure
@@ -253,17 +259,13 @@ export const sessionRouter = router({
             releaseTurnClaim: () => releaseTurnClaim(websocketServiceUrl, internalServiceSecret, sessionId),
             classify: (body) => classifyMessage(moderationServiceUrl, internalServiceSecret, { sessionId, message: body }),
             recordPassedMessage: (body) => recordPassedMessage(db, { sessionId, userId, body }),
-            recordFlaggedMessage: () => recordFlaggedMessage(db, { sessionId, userId }),
+            recordFlaggedMessage: async (body) => {
+              await recordFlaggedMessage(db, { sessionId, userId, body })
+            },
             escalateCrisis: () =>
               escalate(
                 {
-                  insertModerationEvent: () =>
-                    insertModerationEvent(db, {
-                      sessionId,
-                      userId,
-                      messageId: null,
-                      classification: 'crisis',
-                    }),
+                  recordCrisisMessage: () => recordCrisisMessage(db, { sessionId, userId, body: input.body }),
                   logEscalation: (params) => console.error('[ESCALATION] crisis flagged', params),
                   logCriticalFailure: (err, params) =>
                     console.error('[ESCALATION][CRITICAL] failed to persist crisis event', params, err),
@@ -352,5 +354,25 @@ export const sessionRouter = router({
       } catch (err) {
         throw toTRPCError(err)
       }
+    }),
+
+  // The red-highlighted "report as false positive" button next to the
+  // sender's own flag/crisis message (SessionPage.tsx). Only ever
+  // touches the caller's own message — messageRepository.ts's
+  // reportFalsePositive is guarded to `user_id = ctx.userId` at the SQL
+  // level, so there's no way to dispute someone else's message even with
+  // a forged messageId. Records a request for human review; does not by
+  // itself change moderation_status — see
+  // messageRepository.ts's applyHumanReviewOutcome for the (not yet
+  // wired to any endpoint) reviewer-side half of this.
+  reportFalsePositive: verifiedProcedure
+    .input(sessionIdInput.extend({ messageId: z.string().uuid() }))
+    .mutation(async ({ ctx, input }) => {
+      const { db } = ctx.appEnv
+      if (!(await isSessionMember(db, input.sessionId, ctx.userId))) {
+        throw toTRPCError(new NotAMemberError('user is not a member of this session'))
+      }
+      await reportFalsePositiveRepo(db, { messageId: input.messageId, userId: ctx.userId })
+      return { status: 'reported' as const }
     }),
 })

@@ -136,7 +136,11 @@
     "sessionNotActive": "Sessionen är inte aktiv",
     "itsYourTurn": "Det är din tur",
     "hasTheFloor": "{{name}} har ordet",
-    "waitingForNextUser": "Väntar på nästa användare"
+    "waitingForNextUser": "Väntar på nästa användare",
+    "onlyYouCanSeeThis": "Bara du kan se detta",
+    "reportFalsePositive": "Be om en ny titt",
+    "falsePositiveReported": "Vi tar en ny titt",
+    "falsePositiveReportedNotice": "Tack — vi tittar på det."
   },
   "rightPanel": {
     "essentialPages": "Viktiga sidor",
@@ -144,6 +148,10 @@
     "ifInCrisis": "Om du är i kris",
     "crisisResources": "Krisresurser",
     "reportThisSession": "Rapportera denna session"
+  },
+  "crisisModal": {
+    "title": "Du är inte ensam just nu",
+    "notice": "Det du skrev här stannar mellan dig och oss — resten av gruppen ser det inte. Någon tar en titt på det efteråt, ifall det inte behövde hållas tillbaka."
   },
   "centerPanelError": {
     "errorCode": "FEL {{code}}",

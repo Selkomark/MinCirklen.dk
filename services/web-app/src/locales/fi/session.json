@@ -136,7 +136,11 @@
     "sessionNotActive": "Istunto ei ole aktiivinen",
     "itsYourTurn": "On sinun vuorosi",
     "hasTheFloor": "{{name}} puhuu nyt",
-    "waitingForNextUser": "Odotetaan seuraavaa käyttäjää"
+    "waitingForNextUser": "Odotetaan seuraavaa käyttäjää",
+    "onlyYouCanSeeThis": "Vain sinä näet tämän",
+    "reportFalsePositive": "Pyydä uutta tarkistusta",
+    "falsePositiveReported": "Tarkistamme sen uudelleen",
+    "falsePositiveReportedNotice": "Kiitos — tarkistamme asian."
   },
   "rightPanel": {
     "essentialPages": "Tärkeät sivut",
@@ -144,6 +148,10 @@
     "ifInCrisis": "Jos olet kriisissä",
     "crisisResources": "Kriisiapu",
     "reportThisSession": "Ilmoita tästä istunnosta"
+  },
+  "crisisModal": {
+    "title": "Et ole yksin juuri nyt",
+    "notice": "Se, mitä kirjoitit tähän, jää vain sinun ja meidän tietoomme — muu ryhmä ei näe sitä. Joku tarkistaa tämän jälkikäteen sen varalta, ettei sitä olisi tarvinnut pidättää."
   },
   "centerPanelError": {
     "errorCode": "VIRHE {{code}}",

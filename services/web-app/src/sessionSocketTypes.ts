@@ -47,7 +47,15 @@ export interface MessageFrame {
   // payload.type (distinct from this frame's own `type: 'message'` above)
   // distinguishes a real chat message from a synthetic "X joined the
   // circle" row — see trpc-api's messageRepository.ts and
-  // migrations/0001_init.ts.
+  // migrations/0001_init.ts. No moderationStatus/falsePositiveReportedAt
+  // here — the internal publishMessage RPC (websocketServiceAdapter.ts)
+  // only ever carries this fixed field set, and messageService.ts only
+  // ever calls publish() for an already-passed message (never
+  // flag/crisis — those are withheld from the group entirely, see
+  // messageRepository.ts's listMessages). sessionShared.tsx's frame
+  // handler fills in moderationStatus: 'pass' explicitly when turning
+  // this into a ChatMessage, rather than this type claiming a field the
+  // wire payload doesn't actually carry.
   payload: { id: string; sessionId: string; userId: string; body: string; type: 'user' | 'system'; createdAt: string }
 }
 

@@ -16,7 +16,7 @@ describe('escalate', () => {
 
     const resource = await escalate(
       {
-        insertModerationEvent: async () => {
+        recordCrisisMessage: async () => {
           events.push('persisted')
         },
         logEscalation: () => events.push('logged'),
@@ -34,7 +34,7 @@ describe('escalate', () => {
 
     const resource = await escalate(
       {
-        insertModerationEvent: async () => {
+        recordCrisisMessage: async () => {
           throw new Error('db unavailable')
         },
         logEscalation: () => {},

@@ -32,17 +32,22 @@ export interface SendMessageDeps {
   classify(body: string): Promise<Classification>
   // Each of these three maps 1:1 to a single atomic Repository/Service call
   // the controller wires up — see services/trpc-api/src/repositories/messageRepository.ts
-  // for how the 'pass'/'flag' cases persist the message/moderation event.
+  // for how the 'pass'/'flag'/'crisis' cases persist the message/moderation
+  // event. 'flag' and 'crisis' both persist the message now (moderation_status
+  // 'flag'/'crisis') — never published to the group either way, but visible
+  // back to the sender on their own next refresh (see messageRepository.ts's
+  // listMessages).
   recordPassedMessage(body: string): Promise<MessageRow>
-  recordFlaggedMessage(): Promise<void>
+  recordFlaggedMessage(body: string): Promise<void>
   escalateCrisis(): Promise<CrisisResource>
   publish(message: MessageRow): void
   // Turn advancement is now owned by websocket-service (Redis is the live
   // authority — see adapters/websocketServiceAdapter.ts), no longer part
   // of recordPassedMessage/recordFlaggedMessage's own transaction. Called
-  // explicitly below for exactly the same two cases that always advanced
-  // the turn before: a passed message, and a non-crisis flag. A crisis
-  // still never advances it — see the case below.
+  // explicitly below for all three classifications — a passed message, a
+  // flag, and (as of this change) a crisis too, so the sender doesn't keep
+  // the room waiting on them; the resource-card response still fires
+  // unconditionally regardless.
   advanceTurn(): Promise<void>
 }
 
@@ -71,15 +76,20 @@ export async function sendMessage(deps: SendMessageDeps, body: string): Promise<
       return { status: 'sent', message }
     }
     case 'flag': {
-      await deps.recordFlaggedMessage()
+      await deps.recordFlaggedMessage(body)
       await deps.advanceTurn()
       return { status: 'held' }
     }
     case 'crisis': {
-      // Turn intentionally not advanced — see crisisEscalationService.ts
-      // and the plan's rationale (give space rather than force the next
-      // speaker forward).
       const resource = await deps.escalateCrisis()
+      // Turn advances the same as a flag — the sender doesn't stall the
+      // room while their own crisis-resource response and, separately,
+      // human escalation are handled. This is a deliberate product
+      // decision, not a CHARTER.md §3 concern: the deterministic
+      // resource-card/escalation guarantee is about the response the
+      // sender gets and the human alert firing, not about turn-taking
+      // mechanics.
+      await deps.advanceTurn()
       return { status: 'crisis', resource }
     }
     default: {

@@ -136,7 +136,11 @@
     "sessionNotActive": "Session not active",
     "itsYourTurn": "It's your turn",
     "hasTheFloor": "{{name}} has the floor",
-    "waitingForNextUser": "Waiting for the next user"
+    "waitingForNextUser": "Waiting for the next user",
+    "onlyYouCanSeeThis": "Only you can see this",
+    "reportFalsePositive": "Ask for another look",
+    "falsePositiveReported": "We'll take another look",
+    "falsePositiveReportedNotice": "Thanks — we're looking into it."
   },
   "rightPanel": {
     "essentialPages": "Essential pages",
@@ -144,6 +148,10 @@
     "ifInCrisis": "If you're in crisis",
     "crisisResources": "Crisis resources",
     "reportThisSession": "Report this session"
+  },
+  "crisisModal": {
+    "title": "You're not alone right now",
+    "notice": "What you shared here stays between you and our team — nobody else in the group will see it. Someone will take a look afterward, in case this didn't need to be held back."
   },
   "centerPanelError": {
     "errorCode": "ERROR {{code}}",

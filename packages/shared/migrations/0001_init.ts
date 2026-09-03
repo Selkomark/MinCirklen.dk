@@ -158,7 +158,28 @@ export async function up(db: Kysely<any>): Promise<void> {
     // rendered inline in the timeline rather than as a real chat
     // bubble — see services/trpc-api/src/repositories/messageRepository.ts.
     .addColumn('type', 'text', (col) => col.notNull().defaultTo('user'))
+    // Every message is now persisted regardless of classification (flag
+    // and crisis included — previously only 'pass' ever got a row here,
+    // see messageRepository.ts's git history). This column is what keeps
+    // a flagged/crisis row out of the group's shared view: listMessages
+    // only returns a non-'pass' row to its own author, never to other
+    // participants — see messageRepository.ts's listMessages. Never
+    // broadcast (publishMessage) a row whose status isn't 'pass'.
+    // 'reviewed_pass' is distinct from 'pass' on purpose — it means a
+    // human reviewed a flag/crisis and determined it wasn't warranted,
+    // NOT that the classifier originally said pass. Never write
+    // 'reviewed_pass' by resetting this column to 'pass'.
+    .addColumn('moderation_status', 'text', (col) => col.notNull().defaultTo('pass'))
+    // Set when the message's own author disputes a flag/crisis
+    // classification via the report-false-positive action — a request
+    // for human review, not a status change by itself. See
+    // messageRepository.ts's reportFalsePositive.
+    .addColumn('false_positive_reported_at', 'timestamptz')
     .addColumn('created_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`now()`))
+    .addCheckConstraint(
+      'messages_moderation_status_check',
+      sql`moderation_status in ('pass','flag','crisis','reviewed_pass')`,
+    )
     .execute()
 
   await db.schema
