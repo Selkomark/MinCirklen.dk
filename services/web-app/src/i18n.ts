@@ -12,7 +12,11 @@ import resourcesToBackend from 'i18next-resources-to-backend'
 export const NAMESPACES = ['common', 'landing', 'auth', 'start', 'session', 'moderation', 'errors', 'publicPages'] as const
 export type Namespace = (typeof NAMESPACES)[number]
 
-export const SUPPORTED_LNGS = ['en', 'sv', 'da', 'nb', 'fi'] as const
+// Norwegian ('nb') and Finnish ('fi') were dropped from here (2026-09) —
+// current focus is English/Danish/Swedish; Norwegian is next-phase
+// scaling, not current scope. Their locale files were removed, not just
+// unlisted here — re-add both when that phase starts, not just this line.
+export const SUPPORTED_LNGS = ['en', 'sv', 'da'] as const
 
 void i18next
   .use(LanguageDetector)

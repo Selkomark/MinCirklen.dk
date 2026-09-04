@@ -303,7 +303,9 @@ function Shell() {
 // one place that maps between the two, kept in sync automatically since
 // useTranslation()'s `i18n.language` re-renders on every changeLanguage()
 // call (PreferencesProvider, or the public-site language switcher).
-const RAC_LOCALES: Record<string, string> = { en: 'en-US', sv: 'sv-SE', da: 'da-DK', nb: 'nb-NO', fi: 'fi-FI' }
+// nb/fi entries removed alongside SUPPORTED_LNGS (2026-09) — re-add both
+// together when Norwegian's next-phase scaling starts.
+const RAC_LOCALES: Record<string, string> = { en: 'en-US', sv: 'sv-SE', da: 'da-DK' }
 
 function LocaleSync({ children }: { children: ReactNode }) {
   const { i18n } = useTranslation()
