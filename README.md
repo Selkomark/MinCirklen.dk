@@ -18,6 +18,8 @@ circles to be heard in.
   data-disclosure requests
 - [REJECTED_IDEAS.md](REJECTED_IDEAS.md) / [PROMISING_IDEAS.md](PROMISING_IDEAS.md) —
   product/feature ideas evaluated against `CHARTER.md`, with why
+- [docs/executive_blueprint.md](docs/executive_blueprint.md) —
+  the actual AI tooling this project is built with
 
 ## Project layout
 

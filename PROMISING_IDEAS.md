@@ -31,3 +31,32 @@ platform's data model. Needs a clinician's input on the actual prompt
 set before shipping (not something to write from general knowledge) and
 a decision on where it surfaces in the UI — not yet scoped further than
 this.
+
+## 2026-09-05 — Launch now, build a proprietary training dataset once consented users are active
+
+**Idea:** Launch with the current moderation model as-is, accept its
+known quality gaps for a pilot run. Once reaching 50 daily active users
+who consented to AI training, start labeling their conversations to
+build a training dataset and fine-tune the moderation model — framed as
+a proprietary competitive edge.
+
+**Verdict:** promising (narrower: scope labeling to the flagged/crisis/
+human-reviewed subset only, not all messages from consenting users; run
+the DPIA in parallel with reaching the data threshold, not after it;
+make the consent copy explicit that a human reviews flagged content for
+training, not just an automated pipeline).
+
+**Why:** Launching now and improving later off real, consented usage
+data doesn't conflict with `CHARTER.md` on its face. But "labeling the
+conversations" as described is broader than what `TRAINING_CONSIDERATIONS.md`
+(sibling repo) already recommended — scoping to the flagged/reviewed
+subset only, for data minimization and because that's the actually
+high-value signal. It also glosses over that labeling means a human
+(not a clinician) reading real crisis/flag disclosures, which the
+current consent copy ("we use anonymized messages to train and improve
+our AI moderation") doesn't clearly disclose — a transparency gap given
+CHARTER §5 treats transparency as a safety mechanism specifically
+because this touches the crisis-handling path. And the DPIA
+(`docs/roadmap.md` §3.2, still deferred) is the actual gate here, not
+the 50-DAU number, which is a data-volume milestone, not a compliance
+one.
