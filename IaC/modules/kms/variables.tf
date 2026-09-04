@@ -16,6 +16,12 @@ variable "encrypter_decrypter_members" {
   default     = []
 }
 
+variable "decrypter_members" {
+  description = "Members granted roles/cloudkms.cryptoKeyDecrypter (decrypt-only, a distinct predefined role from the combined one above) — for a service that only ever reads existing ciphertext and never encrypts anything new."
+  type        = list(string)
+  default     = []
+}
+
 variable "rotation_period" {
   description = "How often Cloud KMS auto-rotates the key, as a duration string in seconds (e.g. \"7776000s\" = 90 days). Rotation is non-destructive — old versions stay usable for decrypt — so this is a key-hygiene knob, not a durability risk."
   type        = string

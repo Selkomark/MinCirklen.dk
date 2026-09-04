@@ -11,6 +11,16 @@ locals {
   # (service_name, environment) — see modules/cloud-run/main.tf.
   trpc_service_name    = "trpc-api-${local.environment}"
   web_app_service_name = "web-app-${local.environment}"
+
+  # The Pub/Sub OIDC audience data_export_service checks its own push
+  # requests against (PUSH_AUTH_AUDIENCE, below) and module.data_export_pubsub
+  # configures its subscriptions to mint tokens for. Deliberately an
+  # independently-computed opaque string, not module.data_export_service.uri
+  # — using the real URI here would make data_export_service's own env_vars
+  # depend on its own output, a cycle. Doesn't need to look like a URL; both
+  # sides just need to agree on the same value, same reasoning as
+  # trpc_service_name/web_app_service_name above.
+  data_export_push_audience = "mincirklen-data-export-service-${local.environment}"
 }
 
 module "networking" {
@@ -57,6 +67,31 @@ resource "google_service_account" "moderation_service" {
   project      = var.project_id
   account_id   = "moderation-svc-${local.environment}"
   display_name = "Moderation service (${local.environment})"
+}
+
+# GDPR "download my data" worker (services/data-export-service) — a
+# standalone Cloud Run service, deliberately isolated from trpc-api's own
+# process/failure domain, triggered by Pub/Sub push. Pre-created here for
+# the same cross-module-cycle reason as trpc_api/moderation_service above:
+# module.data_export_pubsub below needs to grant this identity Cloud SQL/
+# KMS/GCS access, and needs to reference module.data_export_service's own
+# output — creating the SA as a plain resource first breaks that cycle.
+resource "google_service_account" "data_export_service" {
+  project      = var.project_id
+  account_id   = "data-export-svc-${local.environment}"
+  display_name = "Data export service (${local.environment})"
+}
+
+# The identity Pub/Sub itself mints OIDC tokens for on every push request
+# to data_export_service — deliberately separate from that service's own
+# runtime identity above (narrower blast radius: this SA's only grant
+# anywhere is roles/run.invoker on data_export_service, below, plus what
+# module.data_export_pubsub itself needs from it — it never touches the
+# database, KMS, or the export bucket).
+resource "google_service_account" "data_export_pubsub_push" {
+  project      = var.project_id
+  account_id   = "data-export-push-${local.environment}"
+  display_name = "Data export Pub/Sub push auth (${local.environment})"
 }
 
 # Same reasoning as trpc-api/moderation-service above: the WebSocket service
@@ -120,6 +155,13 @@ module "kms" {
   encrypter_decrypter_members = [
     "serviceAccount:${google_service_account.trpc_api.email}",
   ]
+
+  # data-export-service only ever reads a user's own PII back out for
+  # their export — never encrypts anything new — so it gets the
+  # decrypt-only role, not the combined one above.
+  decrypter_members = [
+    "serviceAccount:${google_service_account.data_export_service.email}",
+  ]
 }
 
 module "trpc_api" {
@@ -141,13 +183,16 @@ module "trpc_api" {
   allow_unauthenticated = true                  # network ingress is already LB-restricted; this just permits the LB itself to invoke it
 
   env_vars = {
-    REDIS_HOST         = module.redis.host
-    REDIS_PORT         = tostring(module.redis.port)
-    DB_INSTANCE        = module.cloud_sql.instance_connection_name
-    DB_NAME            = module.cloud_sql.database_name
-    MODERATION_SVC_URL = module.moderation_service.uri
-    KMS_PROVIDER       = "gcp"
-    KMS_KEY_NAME       = module.kms.key_name
+    REDIS_HOST               = module.redis.host
+    REDIS_PORT               = tostring(module.redis.port)
+    DB_INSTANCE              = module.cloud_sql.instance_connection_name
+    DB_NAME                  = module.cloud_sql.database_name
+    MODERATION_SVC_URL       = module.moderation_service.uri
+    KMS_PROVIDER             = "gcp"
+    KMS_KEY_NAME             = module.kms.key_name
+    PUBSUB_PROVIDER          = "gcp"
+    PUBSUB_PROJECT_ID        = var.project_id
+    PUBSUB_DATA_EXPORT_TOPIC = module.data_export_pubsub.topic_name
   }
 }
 
@@ -199,6 +244,97 @@ module "moderation_service" {
   invoker_members       = ["serviceAccount:${google_service_account.trpc_api.email}"]
 }
 
+# Completed "download my data" exports (services/data-export-service) — a
+# dedicated bucket, since this is the one place actual personal data
+# lands outside Cloud SQL. The 2-day lifecycle rule is defense in depth
+# alongside the app's own 48h TTL (data_export_requests.expires_at) — see
+# docs/gdpr-runbook.md and data-export-service/src/adapters/gcsAdapter.ts.
+resource "google_storage_bucket" "data_exports" {
+  project  = var.project_id
+  name     = "mincirklen-data-exports-${local.environment}"
+  location = var.region
+
+  uniform_bucket_level_access = true
+  public_access_prevention    = "enforced" # downloads only ever happen via a time-limited V4 signed URL, never a public object URL
+
+  lifecycle_rule {
+    condition {
+      age = 2
+    }
+    action {
+      type = "Delete"
+    }
+  }
+}
+
+resource "google_storage_bucket_iam_member" "data_export_service_writer" {
+  bucket = google_storage_bucket.data_exports.name
+  role   = "roles/storage.objectAdmin"
+  member = "serviceAccount:${google_service_account.data_export_service.email}"
+}
+
+# Lets the service sign its own download URLs. V4 signed URLs on Cloud Run
+# go through the IAM Credentials API's signBlob method (no local private
+# key is available), which requires the caller — the service acting as
+# itself — to hold this role on its own identity.
+resource "google_service_account_iam_member" "data_export_service_self_sign" {
+  service_account_id = google_service_account.data_export_service.name
+  role               = "roles/iam.serviceAccountTokenCreator"
+  member             = "serviceAccount:${google_service_account.data_export_service.email}"
+}
+
+module "data_export_service" {
+  source = "../../modules/cloud-run"
+
+  project_id            = var.project_id
+  region                = var.region
+  environment           = local.environment
+  service_name          = "data-export-service"
+  image                 = coalesce(var.data_export_service_image, var.placeholder_image)
+  service_account_email = google_service_account.data_export_service.email
+
+  min_instances = 0
+  max_instances = 5 # a bounded async worker, not a request-serving service — no need for trpc-api's headroom
+
+  # Never public, not even via the LB — reached only by Pub/Sub push
+  # (module.data_export_pubsub below), same posture as moderation_service.
+  # Pub/Sub push to an internal-ingress Cloud Run service is an explicitly
+  # supported, documented GCP pattern (Pub/Sub's push infrastructure is a
+  # trusted Google-internal caller path).
+  ingress               = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  vpc_connector_id      = module.networking.vpc_connector_id
+  vpc_egress            = "PRIVATE_RANGES_ONLY" # still needs public internet for the GCS/KMS/IAM Credentials API calls
+  allow_unauthenticated = false
+  invoker_members       = ["serviceAccount:${google_service_account.data_export_pubsub_push.email}"]
+
+  env_vars = {
+    DB_INSTANCE        = module.cloud_sql.instance_connection_name
+    DB_NAME            = module.cloud_sql.database_name
+    KMS_PROVIDER       = "gcp"
+    KMS_KEY_NAME       = module.kms.key_name
+    GCS_PROVIDER       = "gcp"
+    GCS_BUCKET         = google_storage_bucket.data_exports.name
+    PUSH_AUTH_PROVIDER = "oidc"
+    PUSH_AUTH_AUDIENCE = local.data_export_push_audience
+  }
+}
+
+module "data_export_pubsub" {
+  source = "../../modules/pubsub"
+
+  project_id  = var.project_id
+  environment = local.environment
+  topic_name  = "data-export-requests"
+
+  publisher_members = ["serviceAccount:${google_service_account.trpc_api.email}"]
+
+  push_service_account_email = google_service_account.data_export_pubsub_push.email
+  push_audience              = local.data_export_push_audience
+
+  push_endpoint             = "${module.data_export_service.uri}/pubsub/push"
+  dead_letter_push_endpoint = "${module.data_export_service.uri}/pubsub/dead-letter"
+}
+
 module "cloud_sql" {
   source = "../../modules/cloud-sql"
 
@@ -215,6 +351,7 @@ module "cloud_sql" {
     google_service_account.trpc_api.email,
     google_service_account.websocket_service.email,
     google_service_account.glitchtip.email,
+    google_service_account.data_export_service.email,
   ]
 }
 

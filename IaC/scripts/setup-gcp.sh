@@ -125,7 +125,17 @@ gcloud services enable \
   secretmanager.googleapis.com \
   vpcaccess.googleapis.com \
   certificatemanager.googleapis.com \
+  pubsub.googleapis.com \
+  storage.googleapis.com \
+  iamcredentials.googleapis.com \
   --project="$PROJECT_ID"
+# iamcredentials.googleapis.com lives here (not gated behind --no-oidc
+# below) because it now serves two independent purposes: WIF token
+# exchange for CI (the OIDC section's original reason) AND the IAM
+# Credentials API's signBlob method, which data-export-service's Cloud
+# Run identity needs regardless of whether this repo's CI/WIF is ever
+# set up on this project — see IaC/environments/prod/main.tf's
+# google_service_account_iam_member.data_export_service_self_sign.
 
 # ===========================================================================
 # OIDC section — Workload Identity Federation + per-repo service account.
@@ -137,9 +147,10 @@ else
   echo "Enabling OIDC-specific APIs..."
   gcloud services enable \
     iam.googleapis.com \
-    iamcredentials.googleapis.com \
     sts.googleapis.com \
     --project="$PROJECT_ID"
+  # iamcredentials.googleapis.com is enabled unconditionally in the base
+  # APIs section above now, not here — see that section's comment.
 
   # --- Workload Identity Pool — shared. Reuse if it already exists (e.g.
   # another repo set it up first); create only if genuinely absent.
@@ -216,6 +227,7 @@ else
     roles/servicenetworking.networksAdmin
     roles/resourcemanager.projectIamAdmin
     roles/storage.admin
+    roles/pubsub.admin
   )
   for role in "${ROLES[@]}"; do
     gcloud projects add-iam-policy-binding "$PROJECT_ID" \
@@ -233,8 +245,8 @@ fi
 if [[ "$SKIP_GCS" == true ]]; then
   echo "Skipping GCS section (--no-gcs)."
 else
-  echo "Enabling GCS-specific APIs..."
-  gcloud services enable storage.googleapis.com --project="$PROJECT_ID"
+  # storage.googleapis.com is enabled unconditionally in the base APIs
+  # section above now, not here — see that section's comment.
 
   # Shared per project (per-repo/per-environment separation happens via
   # backend prefix, see environments/prod/backend.tf). Reuse if it exists.

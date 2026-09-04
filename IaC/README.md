@@ -25,6 +25,9 @@ IaC/
     cloud-sql/              Postgres, IAM database auth (no passwords, ever)
     redis/                   self-hosted StatefulSet (default) or Memorystore
     secrets/                  Secret Manager containers + IAM — never values
+    kms/                       Cloud KMS key for user_profiles PII encryption
+    pubsub/                     topic + push subscription + dead-letter, for
+                                 an isolated async worker (data-export-service)
   environments/
     prod/                 root module wiring the above together
 ```
@@ -34,12 +37,12 @@ IaC/
 - **No moderation model/detection logic.** The moderation service's Cloud Run
   *shell* is provisioned; what image runs inside it, and everything about
   detection, is a separate proprietary repo per the spec's own scope note.
-- **No application code.** tRPC API, WebSocket service, web-app, and
-  moderation service all start from `placeholder_image` (Google's public
-  `hello` sample container) so `terraform apply` succeeds before any of them
-  exist. Each service's own CI pipeline takes over from there via
-  `gcloud run deploy --image ...`; `modules/cloud-run` is written to not
-  fight that (`lifecycle.ignore_changes` on the image).
+- **No application code.** tRPC API, WebSocket service, web-app, moderation
+  service, and the data-export service all start from `placeholder_image`
+  (Google's public `hello` sample container) so `terraform apply` succeeds
+  before any of them exist. Each service's own CI pipeline takes over from
+  there via `gcloud run deploy --image ...`; `modules/cloud-run` is written
+  to not fight that (`lifecycle.ignore_changes` on the image).
 - **No web-app/moderation-service pipelines yet.** Section 7.4's gating
   (those pipelines watch this one's `workflow_run` and refuse to deploy
   unless it succeeded for the matching tag) is documented in

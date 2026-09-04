@@ -49,6 +49,14 @@ locals {
     "certificatemanager.googleapis.com",
     "sts.googleapis.com",
     "cloudkms.googleapis.com",
+    # Both added for the GDPR data-export pipeline (IaC/modules/pubsub,
+    # google_storage_bucket.data_exports in environments/prod/main.tf).
+    # storage.googleapis.com wasn't previously listed explicitly — the
+    # state bucket below happened to work regardless since most projects
+    # have it enabled by default, but a fresh project shouldn't have to
+    # rely on that.
+    "pubsub.googleapis.com",
+    "storage.googleapis.com",
   ]
 }
 
@@ -154,6 +162,7 @@ locals {
     "roles/servicenetworking.networksAdmin",
     "roles/resourcemanager.projectIamAdmin",
     "roles/storage.admin",
+    "roles/pubsub.admin", # IaC/modules/pubsub
   ]
 }
 

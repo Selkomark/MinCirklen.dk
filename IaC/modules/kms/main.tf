@@ -42,3 +42,17 @@ resource "google_kms_crypto_key_iam_member" "encrypter_decrypter" {
   role          = "roles/cloudkms.cryptoKeyEncrypterDecrypter"
   member        = each.value
 }
+
+// Decrypt-only, for a service that only ever reads PII back out and never
+// writes any (e.g. data-export-service — see its own adapters/kmsAdapter.ts
+// doc comment on why it's a decrypt-only copy of trpc-api's). A distinct
+// predefined role, not a subset check on the combined role above — this is
+// a real least-privilege boundary: a compromised decrypt-only caller can't
+// also overwrite ciphertext.
+resource "google_kms_crypto_key_iam_member" "decrypter" {
+  for_each = toset(var.decrypter_members)
+
+  crypto_key_id = google_kms_crypto_key.user_profile_pii.id
+  role          = "roles/cloudkms.cryptoKeyDecrypter"
+  member        = each.value
+}
