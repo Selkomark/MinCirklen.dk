@@ -16,6 +16,8 @@ circles to be heard in.
 - [docs/gdpr-runbook.md](docs/gdpr-runbook.md) — manual operator
   procedures for the abuse-prevention ban ledger and post-deletion
   data-disclosure requests
+- [REJECTED_IDEAS.md](REJECTED_IDEAS.md) / [PROMISING_IDEAS.md](PROMISING_IDEAS.md) —
+  product/feature ideas evaluated against `CHARTER.md`, with why
 
 ## Project layout
 
