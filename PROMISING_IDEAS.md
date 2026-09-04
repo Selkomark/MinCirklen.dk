@@ -60,3 +60,23 @@ because this touches the crisis-handling path. And the DPIA
 (`docs/roadmap.md` §3.2, still deferred) is the actual gate here, not
 the 50-DAU number, which is a data-volume milestone, not a compliance
 one.
+
+## 2026-09-05 — Feed session context into the classifier
+
+**Idea:** The moderation classifier currently only ever sees the single
+isolated message being classified, no session history. Feed it the
+recent conversation context too, so ambiguous phrasing ("perhaps I
+should end this conversation") can be judged against tone/history
+instead of in a vacuum.
+
+**Verdict:** promising, as scoped (see the rejected companion idea in
+`REJECTED_IDEAS.md` for the part of this that does NOT fit).
+
+**Why:** This is a pure information improvement to the existing
+deterministic pass/flag/crisis call — same one classification, same
+fail-closed mechanism, just better inputs. Directly explains the false
+positives observed in testing ("...with a smile", "...with love" both
+flagged): with zero context, the deliberate "flag when uncertain" bias
+correctly treats every "ending" phrase as ambiguous. More context should
+reduce false positives without weakening the crisis catch rate, since
+it's improving judgment quality, not adding a bypass path.

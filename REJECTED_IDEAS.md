@@ -40,3 +40,27 @@ would conflate two very different things a user is agreeing to.
 
 See `PROMISING_IDEAS.md`'s matching entry for the narrower version worth
 exploring instead.
+
+## 2026-09-05 — Session-context severity as a posting bypass
+
+**Idea:** Introduce a severity gradient to moderation using session
+context: a plain red flag always blocks the message and shows the
+warning modal, but if the session's context suggests low severity, the
+system might allow the otherwise-flagged message to post anyway.
+
+**Verdict:** rejected.
+
+**Why:** Word-for-word CHARTER.md §3 — "This path must never depend
+solely on a single model's discretion, and it must never have a
+conditional bypass anywhere in the call chain." Letting session-context
+severity decide whether a flagged message posts is exactly that
+bypass — it just moved the discretion from message-level to
+session-level, same mechanism. The failure case is also the worst one:
+ambiguous "ending it" phrasing is precisely where a wrong contextual
+read costs the most. Severity can still shape the *response* within the
+existing fail-closed framework (resource-card wording, human-review
+priority) — it can never decide whether the deterministic safety
+response fires at all. See `PROMISING_IDEAS.md`'s matching entry for the
+part of this idea that is sound: feeding session context into the
+classifier to improve the *same* deterministic call's accuracy, not to
+bypass it.
