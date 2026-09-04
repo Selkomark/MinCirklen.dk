@@ -1,6 +1,7 @@
 import { createDb, createPgPool, runMigrations } from '@mincirklen/shared'
 import { createApp } from './app'
 import type { KmsConfig } from './adapters/kmsAdapter'
+import type { PubSubConfig } from './adapters/pubsubAdapter'
 
 // Never `public` — see packages/shared/src/db/pool.ts and docs/local_dev.md.
 const dbSchema = process.env.DB_SCHEMA ?? 'dev'
@@ -47,6 +48,29 @@ if (!internalServiceSecret) {
   throw new Error('INTERNAL_SERVICE_SECRET is required')
 }
 
+// PUBSUB_PROVIDER unset/"emulator" -> local dev's Pub/Sub emulator (see
+// docker-compose.yml); "gcp" -> real Pub/Sub in production. Same
+// unset-defaults-to-the-local-stand-in convention as KMS_PROVIDER above.
+const pubsubProvider = process.env.PUBSUB_PROVIDER ?? 'emulator'
+const pubsubProjectId = process.env.PUBSUB_PROJECT_ID ?? 'mincirklen-local'
+// Environment-scoped in real deployments (e.g. "data-export-requests-prod",
+// matching IaC/modules/pubsub's naming) — never hardcoded, see
+// adapters/pubsubAdapter.ts's PubSubConfig doc comment.
+const pubsubTopic = process.env.PUBSUB_DATA_EXPORT_TOPIC ?? 'data-export-requests'
+let pubsub: PubSubConfig
+if (pubsubProvider === 'gcp') {
+  pubsub = { provider: 'gcp', projectId: pubsubProjectId, topic: pubsubTopic }
+} else if (pubsubProvider === 'emulator') {
+  pubsub = {
+    provider: 'emulator',
+    emulatorUrl: process.env.PUBSUB_EMULATOR_URL ?? 'http://pubsub:8085',
+    projectId: pubsubProjectId,
+    topic: pubsubTopic,
+  }
+} else {
+  throw new Error(`unknown PUBSUB_PROVIDER "${pubsubProvider}" (expected "emulator" or "gcp")`)
+}
+
 await runMigrations(db, dbSchema)
 
 const app = createApp({
@@ -57,6 +81,7 @@ const app = createApp({
   internalServiceSecret,
   publicBaseUrl: process.env.PUBLIC_BASE_URL ?? 'https://dev-mincirklen.dk',
   vault: kms,
+  pubsub,
   identityHashKey,
   // Optional — Google login layers on top of anonymous auth, it isn't
   // required to boot. See docs/local_dev.md / setup-oauth-env.sh.

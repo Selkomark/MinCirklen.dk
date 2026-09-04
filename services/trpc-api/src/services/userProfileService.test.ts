@@ -8,6 +8,7 @@ const INPUT = {
   country: 'GB',
   mobileNumber: '+44 20 7946 0958',
   stayAnonymous: true,
+  trainingConsent: true,
 }
 
 describe('completeUserProfile', () => {

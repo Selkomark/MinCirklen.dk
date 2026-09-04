@@ -16,6 +16,14 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('id', 'uuid', (col) => col.primaryKey().defaultTo(sql`gen_random_uuid()`))
     .addColumn('created_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`now()`))
     .addColumn('last_seen_at', 'timestamptz')
+    // Null = not banned. The *live-block* half of enforcement: kills an
+    // existing session/login for an account that's been banned but not
+    // yet deleted (see authService.ts's resolveSession). This is
+    // distinct from account_bans/account_ban_evidence below, which is
+    // what survives *after* deletion and blocks re-registration — this
+    // column's only job is stopping continued use of a still-existing
+    // row. Set manually via Adminer for now — see docs/gdpr-runbook.md.
+    .addColumn('banned_at', 'timestamptz')
     .execute()
 
   await db.schema
@@ -60,6 +68,80 @@ export async function up(db: Kysely<any>): Promise<void> {
     // a specific stored one.
     .addColumn('language', 'text')
     .addColumn('timezone', 'text')
+    // Consent to this user's messages being used as AI training source
+    // material — true means consented. Column default is false (the
+    // schema-level safe fallback); RegisterPage.tsx's own checkbox is
+    // pre-checked by product decision (a known GDPR Recital 32 gap, see
+    // TRAINING_CONSIDERATIONS.md in the moderation-engine repo), so most
+    // real rows will actually be inserted as true despite this default —
+    // this column default only matters for a caller that skips the
+    // registration form's own value entirely.
+    .addColumn('training_consent', 'boolean', (col) => col.notNull().defaultTo(false))
+    .execute()
+
+  // The abuse-prevention ledger: deliberately NOT foreign-keyed to
+  // `users.id`, so it survives account deletion entirely — that's the
+  // whole point (see TRAINING_CONSIDERATIONS.md-style reasoning in the
+  // moderation-engine repo, and the GDPR data-export/deletion plan this
+  // shipped alongside). Keyed by identity_hash — the same deterministic
+  // HMAC computed by auth/identityHash.ts's hashIdentitySubject — so a
+  // banned Google account can be recognized again on any future
+  // registration attempt with the same account, even after the original
+  // `users` row is long gone. Legal basis for retaining this past a
+  // deletion request: GDPR Article 17(3)(e) (establishment/exercise/
+  // defence of legal claims) and Article 6(1)(f)/Recital 47 (legitimate
+  // interest in fraud/abuse prevention) — see docs/gdpr-runbook.md.
+  // Write path is manual (Adminer) for now — no admin UI/role exists in
+  // this codebase yet (see TODO.md).
+  await db.schema
+    .createTable('account_bans')
+    .addColumn('id', 'uuid', (col) => col.primaryKey().defaultTo(sql`gen_random_uuid()`))
+    .addColumn('identity_hash', 'text', (col) => col.notNull())
+    .addColumn('provider', 'text', (col) => col.notNull())
+    .addColumn('reason_category', 'text', (col) => col.notNull())
+    // Human-written explanation of the decision — this is what gets
+    // quoted back to the person if they ever request disclosure of what
+    // evidence justified a ban after their account was deleted. Must be
+    // legible on its own, not just a code.
+    .addColumn('decision_summary', 'text', (col) => col.notNull())
+    .addColumn('banned_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`now()`))
+    // Free-text operator identifier — no admin-identity system exists to
+    // reference instead (see TODO.md).
+    .addColumn('banned_by', 'text', (col) => col.notNull())
+    // Historical breadcrumb only — deliberately NOT a foreign key, so it
+    // can dangle after the `users` row it once pointed at is deleted
+    // without blocking anything.
+    .addColumn('user_id_at_ban_time', 'uuid')
+    .addCheckConstraint(
+      'account_bans_reason_category_check',
+      sql`reason_category in ('predatory_contact','harassment','crisis_abuse','illegal_content','other')`,
+    )
+    .execute()
+
+  // Hot lookup path on every OAuth login (see services/googleAuthService.ts
+  // and controllers/oauthController.ts) — not unique, since the same
+  // identity could in principle be banned more than once across its
+  // lifetime (ban, appeal/expire in the future, re-offend).
+  await db.schema.createIndex('account_bans_identity_hash_idx').on('account_bans').column('identity_hash').execute()
+
+  // One-to-many child of account_bans — the actual copied evidence, not
+  // just a category flag, so a disclosure response can show specifically
+  // what justified the decision (GDPR Article 5(2) accountability). Never
+  // attributes evidence to a specific reporter, even when a report
+  // prompted the ban — keeps reporter confidentiality intact even in the
+  // retained record. Cascades on ban_id only — internal to this ledger,
+  // nothing to do with `users`.
+  await db.schema
+    .createTable('account_ban_evidence')
+    .addColumn('id', 'uuid', (col) => col.primaryKey().defaultTo(sql`gen_random_uuid()`))
+    .addColumn('ban_id', 'uuid', (col) => col.notNull().references('account_bans.id').onDelete('cascade'))
+    .addColumn('evidence_type', 'text', (col) => col.notNull())
+    .addColumn('snapshot', 'jsonb', (col) => col.notNull())
+    .addColumn('created_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`now()`))
+    .addCheckConstraint(
+      'account_ban_evidence_type_check',
+      sql`evidence_type in ('message','moderation_event','operator_note')`,
+    )
     .execute()
 
   await db.schema
@@ -232,14 +314,52 @@ export async function up(db: Kysely<any>): Promise<void> {
     .createTable('session_reports')
     .addColumn('id', 'uuid', (col) => col.primaryKey().defaultTo(sql`gen_random_uuid()`))
     .addColumn('session_id', 'uuid', (col) => col.notNull().references('sessions.id').onDelete('cascade'))
-    .addColumn('reporter_user_id', 'uuid', (col) => col.notNull().references('users.id').onDelete('cascade'))
+    // set null, not cascade: if a reporter deletes their own account
+    // later, a report they filed about someone else must survive them —
+    // otherwise self-deletion would let a reporter's own evidence vanish
+    // right when a moderator might need it. Nullable here specifically
+    // because of that (a filed report with no reporter left is still
+    // meaningful; a report can never be filed without one to begin with).
+    .addColumn('reporter_user_id', 'uuid', (col) => col.references('users.id').onDelete('set null'))
     .addColumn('about_user_ids', 'jsonb', (col) => col.notNull())
     .addColumn('body', 'text', (col) => col.notNull())
     .addColumn('created_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`now()`))
     .execute()
+
+  // Tracks a self-service "download my data" request end to end.
+  // trpc-api only ever inserts the row + publishes a Pub/Sub message
+  // (see services/dataExportRequestService.ts) — the actual aggregation
+  // and status transitions past 'pending' are owned entirely by the
+  // separate data-export-service Cloud Run worker, deliberately kept out
+  // of trpc-api's own process so a bug there can never take the rest of
+  // the platform down with it. Cascades on user_id: if the account is
+  // deleted before the export finishes, the pending request should go
+  // too (the worker treats a since-deleted user as a normal failure
+  // path, not a special case, if it's already mid-job).
+  await db.schema
+    .createTable('data_export_requests')
+    .addColumn('id', 'uuid', (col) => col.primaryKey().defaultTo(sql`gen_random_uuid()`))
+    .addColumn('user_id', 'uuid', (col) => col.notNull().references('users.id').onDelete('cascade'))
+    .addColumn('status', 'text', (col) => col.notNull().defaultTo('pending'))
+    .addColumn('storage_key', 'text')
+    .addColumn('requested_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`now()`))
+    .addColumn('completed_at', 'timestamptz')
+    .addColumn('expires_at', 'timestamptz')
+    .addCheckConstraint(
+      'data_export_requests_status_check',
+      sql`status in ('pending','processing','ready','failed','expired')`,
+    )
+    .execute()
+
+  await db.schema
+    .createIndex('data_export_requests_user_id_idx')
+    .on('data_export_requests')
+    .column('user_id')
+    .execute()
 }
 
 export async function down(db: Kysely<any>): Promise<void> {
+  await db.schema.dropTable('data_export_requests').execute()
   await db.schema.dropTable('session_reports').execute()
   await db.schema.dropTable('feedback_ratings').execute()
   await db.schema.dropTable('moderation_events').execute()
@@ -248,6 +368,8 @@ export async function down(db: Kysely<any>): Promise<void> {
   await sql`drop index if exists sessions_name_trgm_idx`.execute(db)
   await db.schema.dropTable('sessions').execute()
   await db.schema.dropTable('topics').execute()
+  await db.schema.dropTable('account_ban_evidence').execute()
+  await db.schema.dropTable('account_bans').execute()
   await db.schema.dropTable('user_profiles').execute()
   await db.schema.dropTable('user_identities').execute()
   await db.schema.dropTable('users').execute()

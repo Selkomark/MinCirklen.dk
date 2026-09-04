@@ -13,6 +13,9 @@ circles to be heard in.
 - [docs/security_findings.md](docs/security_findings.md) — pre-release
   security audit reference (incomplete draft; active findings live in
   `SECURITY_FINDINGS.md`)
+- [docs/gdpr-runbook.md](docs/gdpr-runbook.md) — manual operator
+  procedures for the abuse-prevention ban ledger and post-deletion
+  data-disclosure requests
 
 ## Project layout
 
@@ -22,6 +25,9 @@ services/
   trpc-api/             tRPC API (Cloud Run in prod)
   websocket-service/     WebSocket service (GKE Autopilot in prod)
   moderation-service/     AI moderation (Cloud Run in prod, never public)
+  data-export-service/    GDPR "download my data" worker (Cloud Run in
+                           prod, never public — triggered by Pub/Sub, see
+                           docs/gdpr-runbook.md)
 IaC/                    Terraform for all cloud infrastructure
 local-infra/            Config for the local dev stack (Caddy, dnsmasq)
 docs/                   Deeper docs — see Documentation above

@@ -6,7 +6,8 @@ import type { Context as HonoContext } from 'hono'
 import type { Kysely } from 'kysely'
 import type { GoogleOAuthEndpoints } from './adapters/googleOAuthAdapter'
 import type { KmsConfig } from './adapters/kmsAdapter'
-import { touchUser } from './repositories/userRepository'
+import type { PubSubConfig } from './adapters/pubsubAdapter'
+import { isUserBanned, touchUser } from './repositories/userRepository'
 import { resolveSession } from './services/authService'
 
 export const SESSION_COOKIE_NAME = 'mc_session'
@@ -67,6 +68,10 @@ export interface AppEnv {
   // Encryption-as-a-service for user_profiles PII (Vault Transit locally,
   // a cloud KMS in prod) — see adapters/kmsAdapter.ts.
   vault: KmsConfig
+  // Publish-only client for the data-export request pipeline (a local
+  // Pub/Sub emulator in dev, real Pub/Sub in prod) — see
+  // adapters/pubsubAdapter.ts and services/dataExportRequestService.ts.
+  pubsub: PubSubConfig
   // Keys the OAuth subject hash in user_identities (auth/identityHash.ts)
   // — separate from authSecret (key separation: a leak of one shouldn't
   // compromise the other).
@@ -112,6 +117,7 @@ export function createContextFactory(env: AppEnv) {
       {
         verifyToken: (t) => verifySessionToken(t, env.authSecret),
         touchUser: (userId) => touchUser(env.db, userId),
+        isBanned: (userId) => isUserBanned(env.db, userId),
       },
       token,
     )

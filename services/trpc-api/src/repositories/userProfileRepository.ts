@@ -15,6 +15,7 @@ export interface UserProfileRow {
   createdAt: Date
   language: string | null
   timezone: string | null
+  trainingConsent: boolean
 }
 
 // The only shape ever encrypted/decrypted as a unit — see
@@ -47,6 +48,12 @@ export async function upsertUserProfile(
     // the other section's current values, or it gets nulled out too.
     language?: string | null
     timezone?: string | null
+    // Optional, defaults false (not consented — the schema-level safe
+    // fallback) — same "optional for callers that never touch this"
+    // reasoning as language/timezone above. RegisterPage.tsx's own
+    // checkbox is pre-checked by product decision, so it always sends an
+    // explicit true/false and this fallback rarely applies in practice.
+    trainingConsent?: boolean
   },
 ): Promise<UserProfileRow> {
   const pii: EncryptedPii = {
@@ -57,6 +64,7 @@ export async function upsertUserProfile(
   const piiCiphertext = await encryptField(kms, JSON.stringify(pii))
   const language = params.language ?? null
   const timezone = params.timezone ?? null
+  const trainingConsent = params.trainingConsent ?? false
 
   const row = await db
     .insertInto('user_profiles')
@@ -69,6 +77,7 @@ export async function upsertUserProfile(
       terms_accepted_at: params.termsAcceptedAt,
       language,
       timezone,
+      training_consent: trainingConsent,
     })
     .onConflict((oc) =>
       oc.column('user_id').doUpdateSet({
@@ -79,6 +88,7 @@ export async function upsertUserProfile(
         terms_accepted_at: params.termsAcceptedAt,
         language,
         timezone,
+        training_consent: trainingConsent,
       }),
     )
     .returningAll()
@@ -99,6 +109,7 @@ export async function upsertUserProfile(
     createdAt: row.created_at,
     language: row.language,
     timezone: row.timezone,
+    trainingConsent: row.training_consent,
   }
 }
 
@@ -167,5 +178,6 @@ export async function findUserProfileByUserId(
     createdAt: row.created_at,
     language: row.language,
     timezone: row.timezone,
+    trainingConsent: row.training_consent,
   }
 }

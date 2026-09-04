@@ -15,6 +15,7 @@ const LOGIN_ERROR_KEYS: Record<string, string> = {
   oauth_state: 'errors.oauthState',
   google_failed: 'errors.googleFailed',
   login_failed: 'errors.loginFailed',
+  account_banned: 'errors.accountBanned',
 }
 
 function loginErrorKey(): string | null {

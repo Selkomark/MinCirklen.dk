@@ -6,6 +6,7 @@ import { TextField } from '../components/TextField'
 import { Select, SelectItem } from '../components/Select'
 import { Checkbox } from '../components/Checkbox'
 import { Alert } from '../components/Alert'
+import { Modal } from '../components/Modal'
 import { publicPagePath } from '../publicPages/pages'
 import { SiteHeader } from '../SiteHeader'
 import { SiteFooter } from '../SiteFooter'
@@ -27,6 +28,16 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
   const [country, setCountry] = useState<Key | null>(null)
   const [mobile, setMobile] = useState('')
   const [stayAnonymous, setStayAnonymous] = useState(true)
+  // Unchecked by default — a real, active opt-in (GDPR Recital 32: a
+  // pre-ticked box doesn't count as consent). Independent of termsChecked
+  // below: unlike the terms agreement, declining this never blocks
+  // registration — see canSubmit. If the user hasn't checked this when
+  // they submit, trainingConsentConfirmOpen below shows one explanatory
+  // prompt with a real choice (opt in now, or continue without) rather
+  // than silently proceeding without ever having asked — see
+  // handleSubmitClick.
+  const [trainingConsent, setTrainingConsent] = useState(false)
+  const [trainingConsentConfirmOpen, setTrainingConsentConfirmOpen] = useState(false)
   const [termsChecked, setTermsChecked] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -39,7 +50,12 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
     mobile.trim() !== '' &&
     termsChecked
 
-  async function handleSubmit() {
+  // Takes the final consent value as a parameter rather than reading
+  // `trainingConsent` from closure — the confirm modal's "opt in now"
+  // button calls setTrainingConsent(true) and submits in the same click,
+  // and reading state right after setting it would still see the stale
+  // pre-update value until the next render.
+  async function submitProfile(finalTrainingConsent: boolean) {
     setSubmitError(null)
     setIsSubmitting(true)
     try {
@@ -53,6 +69,7 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
           country: String(country),
           mobileNumber: mobile.trim(),
           stayAnonymous,
+          trainingConsent: finalTrainingConsent,
         }),
       })
 
@@ -65,6 +82,17 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
       setSubmitError(err instanceof Error ? err.message : t('register.saveFailed'))
       setIsSubmitting(false)
     }
+  }
+
+  // The actual submit button's handler — routes through the one-time
+  // explanatory prompt when the user hasn't opted in, instead of
+  // submitting silently without ever having asked.
+  function handleSubmitClick() {
+    if (!trainingConsent) {
+      setTrainingConsentConfirmOpen(true)
+      return
+    }
+    void submitProfile(trainingConsent)
   }
 
   return (
@@ -158,6 +186,11 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
               </label>
 
               <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                <Checkbox isSelected={trainingConsent} onChange={setTrainingConsent} />
+                <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>{t('register.trainingConsent')}</span>
+              </label>
+
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
                 <Checkbox isSelected={termsChecked} onChange={setTermsChecked} />
                 <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>
                   {t('register.agreeToThePrefix')}{' '}
@@ -174,12 +207,43 @@ export function RegisterPage({ onComplete }: RegisterPageProps) {
 
             {submitError && <Alert variant="urgent">{submitError}</Alert>}
 
-            <Button variant="safe" isPending={isSubmitting} isDisabled={!canSubmit} onPress={handleSubmit} style={{ width: '100%' }}>
+            <Button variant="safe" isPending={isSubmitting} isDisabled={!canSubmit} onPress={handleSubmitClick} style={{ width: '100%' }}>
               {t('register.completeRegistration')}
             </Button>
           </div>
         </div>
       </div>
+
+      <Modal isOpen={trainingConsentConfirmOpen} onOpenChange={setTrainingConsentConfirmOpen} title={t('register.trainingConsentConfirmTitle')}>
+        {(close) => (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+            <p style={{ margin: 0, fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)', lineHeight: 'var(--line-height-base)' }}>
+              {t('register.trainingConsentConfirmBody')}
+            </p>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <Button
+                variant="secondary"
+                onPress={() => {
+                  close()
+                  void submitProfile(false)
+                }}
+              >
+                {t('register.trainingConsentConfirmDecline')}
+              </Button>
+              <Button
+                variant="safe"
+                onPress={() => {
+                  setTrainingConsent(true)
+                  close()
+                  void submitProfile(true)
+                }}
+              >
+                {t('register.trainingConsentConfirmAccept')}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       <SiteFooter />
     </div>

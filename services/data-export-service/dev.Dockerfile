@@ -14,13 +14,13 @@ WORKDIR /app
 COPY package.json bun.lock ./
 COPY packages/proto/package.json packages/proto/package.json
 COPY packages/shared/package.json packages/shared/package.json
-COPY services/websocket-service/package.json services/websocket-service/package.json
 COPY services/trpc-api/package.json services/trpc-api/package.json
+COPY services/websocket-service/package.json services/websocket-service/package.json
 COPY services/data-export-service/package.json services/data-export-service/package.json
 RUN bun install
 
-WORKDIR /app/services/websocket-service
+WORKDIR /app/services/data-export-service
 
-EXPOSE 8080
+EXPOSE 8083
 
 CMD ["bun", "run", "dev"]

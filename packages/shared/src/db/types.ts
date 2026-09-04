@@ -11,6 +11,9 @@ export interface UsersTable {
   id: Generated<string>
   created_at: Timestamp
   last_seen_at: NullableTimestamp
+  // Null = not banned. Live-block only — see migrations/0001_init.ts and
+  // AccountBansTable below for the ledger that survives deletion.
+  banned_at: NullableTimestamp
 }
 
 export interface SessionsTable {
@@ -97,10 +100,48 @@ export interface FeedbackRatingsTable {
 export interface SessionReportsTable {
   id: Generated<string>
   session_id: string
-  reporter_user_id: string
+  // Nullable: set null (not cascaded) if the reporter later deletes
+  // their own account, so their report survives them — see
+  // migrations/0001_init.ts.
+  reporter_user_id: string | null
   about_user_ids: JSONColumnType<string[]>
   body: string
   created_at: Timestamp
+}
+
+// The abuse-prevention ledger — deliberately NOT foreign-keyed to
+// `users.id`, so it survives account deletion. See
+// migrations/0001_init.ts for the full reasoning and GDPR basis.
+export interface AccountBansTable {
+  id: Generated<string>
+  identity_hash: string
+  provider: string
+  reason_category: 'predatory_contact' | 'harassment' | 'crisis_abuse' | 'illegal_content' | 'other'
+  decision_summary: string
+  banned_at: Timestamp
+  banned_by: string
+  user_id_at_ban_time: string | null
+}
+
+export interface AccountBanEvidenceTable {
+  id: Generated<string>
+  ban_id: string
+  evidence_type: 'message' | 'moderation_event' | 'operator_note'
+  snapshot: JSONColumnType<Record<string, unknown>>
+  created_at: Timestamp
+}
+
+// See services/dataExportRequestService.ts (trpc-api, insert + publish
+// only) and the separate data-export-service Cloud Run worker (owns
+// every status transition past 'pending').
+export interface DataExportRequestsTable {
+  id: Generated<string>
+  user_id: string
+  status: Generated<'pending' | 'processing' | 'ready' | 'failed' | 'expired'>
+  storage_key: string | null
+  requested_at: Timestamp
+  completed_at: NullableTimestamp
+  expires_at: NullableTimestamp
 }
 
 export interface UserIdentitiesTable {
@@ -128,6 +169,8 @@ export interface UserProfilesTable {
   // Both nullable — null means "not set," not an empty/invalid value.
   language: string | null
   timezone: string | null
+  // Consent to AI training use, true = consented — see migrations/0001_init.ts.
+  training_consent: Generated<boolean>
 }
 
 export interface TopicsTable {
@@ -150,4 +193,7 @@ export interface Database {
   user_identities: UserIdentitiesTable
   user_profiles: UserProfilesTable
   topics: TopicsTable
+  account_bans: AccountBansTable
+  account_ban_evidence: AccountBanEvidenceTable
+  data_export_requests: DataExportRequestsTable
 }

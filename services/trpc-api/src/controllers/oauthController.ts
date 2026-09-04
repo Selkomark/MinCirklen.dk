@@ -5,6 +5,7 @@ import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import { GoogleOAuthError, buildAuthorizationUrl, exchangeCodeForTokens, verifyIdToken } from '../adapters/googleOAuthAdapter'
 import { hashIdentitySubject } from '../auth/identityHash'
 import { SESSION_COOKIE_NAME, buildLegacySessionCookieClear, buildSessionCookie, sessionCookieDomain, type AppEnv } from '../context'
+import { findBanByIdentityHash } from '../repositories/accountBanRepository'
 import { findUserIdByIdentity, linkIdentity } from '../repositories/userIdentityRepository'
 import { insertUser, userExists } from '../repositories/userRepository'
 import { userProfileExists } from '../repositories/userProfileRepository'
@@ -96,6 +97,19 @@ export function createOAuthController(env: AppEnv): Hono {
       const { idToken } = await exchangeCodeForTokens(config, code)
       const subject = (await verifyIdToken(config, idToken)).subject
       const subjectHash = hashIdentitySubject(subject, env.identityHashKey)
+
+      // The piece that actually survives account deletion: this identity
+      // hash is recomputed fresh on every login attempt, so even a
+      // banned account that was fully deleted (users row and everything
+      // cascading from it) is still recognized here — account_bans is
+      // deliberately never foreign-keyed to `users.id`. Checked before
+      // resolveGoogleLogin ever runs, so a banned identity never creates
+      // or links a new user row at all.
+      const ban = await findBanByIdentityHash(env.db, GOOGLE_PROVIDER, subjectHash)
+      if (ban) {
+        deleteCookie(c, SESSION_COOKIE_NAME, { path: '/', domain: sessionCookieDomain(env.publicBaseUrl) })
+        return loginErrorRedirect(c, env, 'account_banned')
+      }
 
       // An established Google identity always wins over the active
       // anonymous session (see googleAuthService.ts) — if this identity is

@@ -1,12 +1,16 @@
 import { createSessionToken, createUserProfileInputSchema } from '@mincirklen/shared'
-import { insertUser } from '../repositories/userRepository'
+import { deleteUser, insertUser } from '../repositories/userRepository'
 import { hasLinkedIdentityForUser } from '../repositories/userIdentityRepository'
 import { findUserProfileByUserId, upsertUserProfile, userProfileExists } from '../repositories/userProfileRepository'
 import { listActiveSessionIdsForUser } from '../repositories/sessionRepository'
+import { findDataExportRequestsForUser, insertDataExportRequest } from '../repositories/dataExportRequestRepository'
 import { KmsError } from '../adapters/kmsAdapter'
+import { publishDataExportRequested } from '../adapters/pubsubAdapter'
 import { notifyProfileUpdated } from '../adapters/websocketServiceAdapter'
 import { createAnonymousSession } from '../services/authService'
 import { completeUserProfile } from '../services/userProfileService'
+import { deleteAccount } from '../services/accountDeletionService'
+import { getDataExportStatus, requestDataExport } from '../services/dataExportRequestService'
 import { buildLegacySessionCookieClear, buildLogoutCookie, buildSessionCookie } from '../context'
 import type { AppEnv } from '../context'
 import { googleLinkedProcedure, protectedProcedure, publicProcedure, router } from './trpc'
@@ -112,4 +116,33 @@ export const authRouter = router({
 
     return profile
   }),
+
+  // GDPR right to erasure (Article 17) — immediate, no grace period (see
+  // the plan this shipped with). Existing cascade FKs do the actual
+  // cleanup; account_bans/account_ban_evidence are untouched by
+  // construction. Clears the session cookie server-side too, same as
+  // `logout` above — the account this cookie names no longer exists
+  // either way, so there's nothing left to guard by not clearing it.
+  deleteAccount: protectedProcedure.mutation(async ({ ctx }) => {
+    await deleteAccount({ deleteUser: () => deleteUser(ctx.appEnv.db, ctx.userId) })
+
+    ctx.resHeaders.append('set-cookie', buildLogoutCookie(ctx.appEnv.publicBaseUrl))
+    ctx.resHeaders.append('set-cookie', buildLegacySessionCookieClear())
+
+    return { ok: true }
+  }),
+
+  // "Download your data" (GDPR Article 20) — see
+  // services/dataExportRequestService.ts's doc comment for why this only
+  // inserts a row and publishes, never aggregates anything itself.
+  requestDataExport: protectedProcedure.mutation(({ ctx }) =>
+    requestDataExport({
+      insertRequest: () => insertDataExportRequest(ctx.appEnv.db, ctx.userId),
+      publish: (requestId) => publishDataExportRequested(ctx.appEnv.pubsub, { requestId, userId: ctx.userId }),
+    }),
+  ),
+
+  getDataExportStatus: protectedProcedure.query(({ ctx }) =>
+    getDataExportStatus({ findRequests: () => findDataExportRequestsForUser(ctx.appEnv.db, ctx.userId) }),
+  ),
 })

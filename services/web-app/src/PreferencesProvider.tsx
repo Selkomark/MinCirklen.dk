@@ -16,6 +16,7 @@ export interface AccountProfile {
   stayAnonymous: boolean
   language: string | null
   timezone: string | null
+  trainingConsent: boolean
 }
 
 interface PreferencesContextValue {

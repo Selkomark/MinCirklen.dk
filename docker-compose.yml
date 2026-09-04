@@ -163,6 +163,146 @@ services:
       vault:
         condition: service_healthy
 
+  # Local stand-in for GCP Pub/Sub — the data-export request pipeline's
+  # transport (trpc-api publishes, data-export-service subscribes via a
+  # push subscription). Stateless by design: topics/subscriptions are
+  # cheap to recreate on every start (see pubsub-init below), so unlike
+  # postgres/redis/nats there's no persistent volume here.
+  pubsub:
+    image: gcr.io/google.com/cloudsdktool/cloud-sdk@sha256:9e3cddf9cd9fa726c38c7320904ef601ce4a7c815c8c11c24004146d85a195c1 # emulators
+    container_name: mincirklen-pubsub
+    restart: unless-stopped
+    entrypoint: ['gcloud', 'beta', 'emulators', 'pubsub', 'start', '--host-port=0.0.0.0:8085', '--project=mincirklen-local']
+    ports:
+      - '8085:8085'
+    healthcheck:
+      # No dedicated health endpoint — any TCP response (even a 404) means
+      # the emulator is up. bash's /dev/tcp avoids needing curl/nc/wget in
+      # this image.
+      test: ['CMD-SHELL', 'bash -c "cat < /dev/null > /dev/tcp/localhost/8085"']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot: creates the data-export-requests topic and its push
+  # subscription (targeting data-export-service directly, plus a
+  # dead-letter topic/subscription for the bounded-retry-then-fail path —
+  # see data-export-service/src/services/exportGenerationService.ts).
+  # Idempotent (`|| true` on "already exists"), same pattern as vault-init.
+  #
+  # Plain REST calls against the emulator, not `gcloud pubsub` — despite
+  # PUBSUB_EMULATOR_HOST being the documented env var for pointing *client
+  # libraries* at an emulator, the `gcloud pubsub` command group doesn't
+  # actually honor it and tries to hit the real pubsub.googleapis.com
+  # regardless (confirmed directly against this exact image/command before
+  # settling on this approach) — same REST-call posture as gcs-init below,
+  # for the same underlying reason (the CLI tooling doesn't cooperate with
+  # local emulators the way you'd expect).
+  pubsub-init:
+    image: curlimages/curl:8.11.0
+    container_name: mincirklen-pubsub-init
+    restart: 'no'
+    entrypoint: ['sh', '-c']
+    command:
+      - |
+        set -e
+        BASE=http://pubsub:8085/v1/projects/mincirklen-local
+        curl -s -X PUT "$$BASE/topics/data-export-requests-dead-letter" || true
+        curl -s -X PUT "$$BASE/topics/data-export-requests" || true
+        curl -s -X PUT "$$BASE/subscriptions/data-export-requests-push" \
+          -H 'content-type: application/json' \
+          -d '{
+                "topic": "projects/mincirklen-local/topics/data-export-requests",
+                "pushConfig": {"pushEndpoint": "http://data-export-service:8083/pubsub/push"},
+                "deadLetterPolicy": {
+                  "deadLetterTopic": "projects/mincirklen-local/topics/data-export-requests-dead-letter",
+                  "maxDeliveryAttempts": 5
+                }
+              }' || true
+        curl -s -X PUT "$$BASE/subscriptions/data-export-requests-dead-letter-push" \
+          -H 'content-type: application/json' \
+          -d '{
+                "topic": "projects/mincirklen-local/topics/data-export-requests-dead-letter",
+                "pushConfig": {"pushEndpoint": "http://data-export-service:8083/pubsub/dead-letter"}
+              }' || true
+    depends_on:
+      pubsub:
+        condition: service_healthy
+
+  # Local stand-in for GCS — the data-export worker's own object store for
+  # completed exports (see data-export-service/src/adapters/gcsAdapter.ts).
+  # Real server with file storage (like vault/postgres/redis), not
+  # in-memory, so an uploaded export survives a restart during dev.
+  gcs:
+    image: fsouza/fake-gcs-server@sha256:666f86b873120818b10a5e68d99401422fcf8b00c1f27fe89599c35236f48b4c # 1.52
+    container_name: mincirklen-gcs
+    restart: unless-stopped
+    command: ['-scheme', 'http', '-port', '4443', '-filesystem-root', '/storage']
+    ports:
+      - '4443:4443'
+    volumes:
+      - mincirklen-gcs-data:/storage
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:4443/storage/v1/b >/dev/null 2>&1']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot: creates the mincirklen-data-exports bucket. Idempotent —
+  # fake-gcs-server's create-bucket call just 409s on a re-run, which this
+  # ignores the same way vault-init/pubsub-init ignore their own "already
+  # exists" errors.
+  gcs-init:
+    image: curlimages/curl:8.11.0
+    container_name: mincirklen-gcs-init
+    restart: 'no'
+    entrypoint: ['sh', '-c']
+    command:
+      - |
+        curl -s -X POST 'http://gcs:4443/storage/v1/b?project=mincirklen-local' \
+          -H 'content-type: application/json' \
+          -d '{"name":"mincirklen-data-exports"}' || true
+    depends_on:
+      gcs:
+        condition: service_healthy
+
+  data-export-service:
+    build:
+      context: .
+      dockerfile: services/data-export-service/dev.Dockerfile
+    container_name: mincirklen-data-export-service
+    restart: unless-stopped
+    environment:
+      PORT: '8083'
+      DATABASE_URL: postgres://mincirklen:mincirklen@postgres:5432/mincirklen
+      DB_SCHEMA: dev
+      KMS_PROVIDER: vault
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: dev-only-not-for-production
+      GCS_PROVIDER: emulator
+      GCS_BUCKET: mincirklen-data-exports
+      GCS_EMULATOR_URL: http://gcs:4443
+      # The Pub/Sub emulator can't issue real signed OIDC tokens, so
+      # there's nothing to verify locally — see
+      # adapters/pubsubPushAdapter.ts. Real Pub/Sub in prod always uses
+      # PUSH_AUTH_PROVIDER=oidc.
+      PUSH_AUTH_PROVIDER: none
+      SENTRY_DSN: ${DATA_EXPORT_SERVICE_SENTRY_DSN:-}
+    # Deliberately no `ports:` — never public ingress, same posture as
+    # moderation-service. The pubsub-init subscription above and any
+    # manual testing both reach it over the compose network by service
+    # name alone.
+    volumes:
+      - ./services/data-export-service/src:/app/services/data-export-service/src
+      - ./packages/shared/src:/app/packages/shared/src
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vault-init:
+        condition: service_completed_successfully
+      gcs-init:
+        condition: service_completed_successfully
+
   trpc-api:
     build:
       context: .
@@ -202,6 +342,17 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: dev-only-not-for-production
+      # Publish-only client for the data-export request pipeline (see
+      # adapters/pubsubAdapter.ts) — the local Pub/Sub emulator here,
+      # real Pub/Sub in prod (PUBSUB_PROVIDER=gcp).
+      PUBSUB_PROVIDER: emulator
+      PUBSUB_PROJECT_ID: mincirklen-local
+      PUBSUB_EMULATOR_URL: http://pubsub:8085
+      # No environment suffix locally — matches the bare topic name
+      # pubsub-init creates on the emulator. Real deployments use the
+      # environment-scoped name Terraform creates instead (see
+      # IaC/modules/pubsub and adapters/pubsubAdapter.ts).
+      PUBSUB_DATA_EXPORT_TOPIC: data-export-requests
       # Unset by default — same "don't report dev noise unless opted in"
       # posture as web-app's VITE_SENTRY_DSN. See src/app.ts's sentry()
       # middleware and local-infra/glitchtip/init.py's printed DSN.
@@ -217,6 +368,8 @@ services:
       postgres:
         condition: service_healthy
       vault-init:
+        condition: service_completed_successfully
+      pubsub-init:
         condition: service_completed_successfully
 
   websocket-service:
@@ -495,3 +648,4 @@ volumes:
   mincirklen-redisinsight-data:
   mincirklen-nats-nui-data:
   mincirklen-glitchtip-uploads:
+  mincirklen-gcs-data:

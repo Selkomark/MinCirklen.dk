@@ -216,6 +216,9 @@ beforeAll(async () => {
     internalServiceSecret: INTERNAL_SERVICE_SECRET,
     publicBaseUrl: 'https://dev-mincirklen.dk',
     vault: VAULT,
+    // Never actually called by anything this file exercises — see
+    // app.integration.test.ts's identical comment.
+    pubsub: { provider: 'gcp', projectId: 'session-integration-test', topic: 'data-export-requests' },
     identityHashKey: 'session-integration-test-identity-hash-key',
   })
 })

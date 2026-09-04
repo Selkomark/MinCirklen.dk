@@ -7,6 +7,7 @@ import { Avatar } from '../components/Avatar'
 import { Checkbox } from '../components/Checkbox'
 import { Switch } from '../components/Switch'
 import { IconButton } from '../components/IconButton'
+import { DialogTrigger, Popover, Dialog } from 'react-aria-components'
 import { Modal } from '../components/Modal'
 import { Textarea } from '../components/Textarea'
 import { TextField } from '../components/TextField'
@@ -744,6 +745,7 @@ interface ProfileDraft {
   stayAnonymous: boolean
   language: SupportedLanguage
   timezone: string | null
+  trainingConsent: boolean
 }
 
 function draftsEqual(a: ProfileDraft, b: ProfileDraft): boolean {
@@ -755,7 +757,8 @@ function draftsEqual(a: ProfileDraft, b: ProfileDraft): boolean {
     a.mobile === b.mobile &&
     a.stayAnonymous === b.stayAnonymous &&
     a.language === b.language &&
-    a.timezone === b.timezone
+    a.timezone === b.timezone &&
+    a.trainingConsent === b.trainingConsent
   )
 }
 
@@ -824,6 +827,9 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
   const [editStayAnonymous, setEditStayAnonymous] = useState(true)
   const [editLanguage, setEditLanguage] = useState<SupportedLanguage>('en')
   const [editTimezone, setEditTimezone] = useState<string | null>(null)
+  // Consent to AI training use — defaults false (not consented, matches
+  // the DB column default) until the real profile loads.
+  const [editTrainingConsent, setEditTrainingConsent] = useState(false)
   const [isSavingProfile, setIsSavingProfile] = useState(false)
   const [saveProfileError, setSaveProfileError] = useState<string | null>(null)
   // What's actually saved right now — diffed against the live draft below
@@ -838,6 +844,26 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
   // render site below), not by hooking every individual field's onChange.
   const [justSaved, setJustSaved] = useState(false)
 
+  // "Download your data" (GDPR Article 20) — mirrors DataExportRequestSummary
+  // from trpc-api's dataExportRequestService.ts. null means "nothing
+  // requested yet, or the modal hasn't fetched status this open" — the
+  // request button shows in that state too, same as after a 'failed' one.
+  const [latestExport, setLatestExport] = useState<{
+    status: 'pending' | 'processing' | 'ready' | 'failed' | 'expired'
+    downloadUrl: string | null
+  } | null>(null)
+  const [isRequestingExport, setIsRequestingExport] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
+
+  // "Delete account" (GDPR Article 17) — immediate, no grace period (see
+  // the plan this shipped with). Type-to-confirm friction before the
+  // actual irreversible call, same pattern as the registration page's
+  // training-consent confirm modal.
+  const [deleteAccountConfirmOpen, setDeleteAccountConfirmOpen] = useState(false)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false)
+  const [deleteAccountError, setDeleteAccountError] = useState<string | null>(null)
+
   const currentDraft: ProfileDraft = {
     firstName: editFirstName,
     lastName: editLastName,
@@ -847,6 +873,7 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
     stayAnonymous: editStayAnonymous,
     language: editLanguage,
     timezone: editTimezone,
+    trainingConsent: editTrainingConsent,
   }
   const isDirty = savedSnapshot !== null && !draftsEqual(currentDraft, savedSnapshot)
 
@@ -859,6 +886,11 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
     setMobileDetailOpen(false)
     setSaveProfileError(null)
     setJustSaved(false)
+    setLatestExport(null)
+    setExportError(null)
+    setDeleteAccountConfirmOpen(false)
+    setDeleteConfirmText('')
+    setDeleteAccountError(null)
   }, [isOpen])
 
   // Re-seeds the draft fields whenever a freshly (re)loaded profile shows
@@ -879,6 +911,7 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
       stayAnonymous: profile.stayAnonymous,
       language: (profile.language as SupportedLanguage | null) ?? detectDefaultLanguage(),
       timezone: profile.timezone,
+      trainingConsent: profile.trainingConsent,
     }
     setEditFirstName(snapshot.firstName)
     setEditLastName(snapshot.lastName)
@@ -888,8 +921,81 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
     setEditStayAnonymous(snapshot.stayAnonymous)
     setEditLanguage(snapshot.language)
     setEditTimezone(snapshot.timezone)
+    setEditTrainingConsent(snapshot.trainingConsent)
     setSavedSnapshot(snapshot)
   }, [isOpen, profile])
+
+  async function fetchLatestExportStatus() {
+    try {
+      const res = await fetch('/api/trpc/auth.getDataExportStatus')
+      if (!res.ok) return
+      const body = (await res.json()) as {
+        result: { data: { status: 'pending' | 'processing' | 'ready' | 'failed' | 'expired'; downloadUrl: string | null }[] }
+      }
+      // Already sorted newest-first by the backend (requestedAt desc) —
+      // the first entry is always the one to show.
+      setLatestExport(body.result.data[0] ?? null)
+    } catch {
+      // Silent — this is a background status refresh, not a
+      // user-initiated action; a failed poll just tries again next tick.
+    }
+  }
+
+  // Fetch once when the Privacy section becomes visible, and again on
+  // every subsequent visit — a request made in an earlier visit to this
+  // modal (or a different tab) should still show up.
+  useEffect(() => {
+    if (!isOpen || section !== 'privacy') return
+    void fetchLatestExportStatus()
+  }, [isOpen, section])
+
+  // Lightweight polling while a request is in flight on the worker side
+  // — this is the ONLY way the UI learns it finished, since trpc-api
+  // itself has no way to push that update (see
+  // dataExportRequestService.ts's doc comment on why the worker is
+  // fully decoupled). Stops itself as soon as the status leaves
+  // pending/processing.
+  useEffect(() => {
+    if (!isOpen || section !== 'privacy') return
+    if (latestExport?.status !== 'pending' && latestExport?.status !== 'processing') return
+    const interval = setInterval(() => void fetchLatestExportStatus(), 4000)
+    return () => clearInterval(interval)
+  }, [isOpen, section, latestExport?.status])
+
+  async function handleRequestExport() {
+    setExportError(null)
+    setIsRequestingExport(true)
+    try {
+      const res = await fetch('/api/trpc/auth.requestDataExport', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      if (!res.ok) throw new Error('request failed')
+      setLatestExport({ status: 'pending', downloadUrl: null })
+    } catch {
+      setExportError(dt('accountModal.dataExportRequestFailed'))
+    } finally {
+      setIsRequestingExport(false)
+    }
+  }
+
+  async function handleDeleteAccount() {
+    setDeleteAccountError(null)
+    setIsDeletingAccount(true)
+    try {
+      const res = await fetch('/api/trpc/auth.deleteAccount', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      if (!res.ok) throw new Error('delete failed')
+      window.location.href = landingPath()
+    } catch {
+      setDeleteAccountError(dt('accountModal.deleteAccountFailed'))
+      setIsDeletingAccount(false)
+    }
+  }
 
   const canSaveProfile =
     editFirstName.trim() !== '' &&
@@ -931,6 +1037,7 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
       stayAnonymous: editStayAnonymous,
       language: editLanguage,
       timezone: editTimezone,
+      trainingConsent: editTrainingConsent,
     }
     try {
       const res = await fetch('/api/trpc/auth.completeProfile', {
@@ -945,6 +1052,7 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
           stayAnonymous: trimmed.stayAnonymous,
           language: trimmed.language,
           timezone: trimmed.timezone,
+          trainingConsent: trimmed.trainingConsent,
         }),
       })
       if (!res.ok) throw new Error('error')
@@ -1206,7 +1314,7 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
             </>
           )}
           {section === 'privacy' && (
-            <>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
               <div style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-bold)' as unknown as number }}>
                 {t('nav.privacy')}
               </div>
@@ -1222,11 +1330,134 @@ function AccountModal({ isOpen, onOpenChange }: { isOpen: boolean; onOpenChange:
               >
                 {dt('accountModal.readFullPrivacyPolicy')}
               </a>
-            </>
+
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-4)' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>{dt('accountModal.trainingConsent')}</span>
+                    <DialogTrigger>
+                      <IconButton
+                        icon="!"
+                        label={dt('accountModal.trainingConsentInfoLabel')}
+                        style={{ width: 20, height: 20, fontSize: 'var(--font-size-xs)' }}
+                      />
+                      <Popover className="ds-tooltip" placement="top">
+                        <Dialog style={{ outline: 'none' }}>{dt('accountModal.trainingConsentInfo')}</Dialog>
+                      </Popover>
+                    </DialogTrigger>
+                  </div>
+                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>{dt('accountModal.trainingConsentHint')}</div>
+                </div>
+                <Switch isSelected={editTrainingConsent} onChange={setEditTrainingConsent} />
+              </div>
+
+              {saveProfileError && <Alert variant="urgent">{saveProfileError}</Alert>}
+
+              <SaveProfileRow
+                isPending={isSavingProfile}
+                canSubmit={canSubmitProfile}
+                justSaved={justSaved}
+                isDirty={isDirty}
+                savedLabel={t('actions.saved')}
+                saveLabel={t('actions.saveChanges')}
+                onSave={() => void handleSaveProfile()}
+              />
+
+              <div style={{ borderTop: '0.5px solid var(--border-subtle)', paddingTop: 'var(--space-4)' }}>
+                <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>
+                  {dt('accountModal.dataExport')}
+                </div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', marginBottom: 10 }}>
+                  {dt('accountModal.dataExportHint')}
+                </div>
+
+                {exportError && <Alert variant="urgent">{exportError}</Alert>}
+
+                {latestExport?.status === 'ready' && latestExport.downloadUrl ? (
+                  <a
+                    href={latestExport.downloadUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ds-inline-link"
+                    style={{ fontSize: 'var(--font-size-sm)' }}
+                  >
+                    {dt('accountModal.dataExportDownload')}
+                  </a>
+                ) : latestExport?.status === 'pending' || latestExport?.status === 'processing' ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Spinner size={16} />
+                    <span style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-secondary)' }}>
+                      {dt('accountModal.dataExportPreparing')}
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    {latestExport?.status === 'failed' && (
+                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--signal-urgent)', marginBottom: 6 }}>
+                        {dt('accountModal.dataExportFailed')}
+                      </div>
+                    )}
+                    <Button variant="secondary" isPending={isRequestingExport} onPress={() => void handleRequestExport()}>
+                      {dt('accountModal.dataExportRequest')}
+                    </Button>
+                  </>
+                )}
+              </div>
+
+              <div style={{ borderTop: '0.5px solid var(--border-subtle)', paddingTop: 'var(--space-4)' }}>
+                <div style={{ fontSize: 'var(--font-size-sm)', color: 'var(--text-primary)' }}>
+                  {dt('accountModal.deleteAccount')}
+                </div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', marginBottom: 10 }}>
+                  {dt('accountModal.deleteAccountHint')}
+                </div>
+                <Button variant="urgent" onPress={() => setDeleteAccountConfirmOpen(true)}>
+                  {dt('accountModal.deleteAccountButton')}
+                </Button>
+              </div>
+            </div>
           )}
           </div>
         </div>
       </div>
+
+      <Modal
+        isOpen={deleteAccountConfirmOpen}
+        onOpenChange={(open) => {
+          setDeleteAccountConfirmOpen(open)
+          if (!open) {
+            setDeleteConfirmText('')
+            setDeleteAccountError(null)
+          }
+        }}
+        title={dt('accountModal.deleteAccountConfirmTitle')}
+      >
+        {(close) => (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+            <Alert variant="urgent">{dt('accountModal.deleteAccountConfirmBody')}</Alert>
+            <TextField
+              label={dt('accountModal.deleteAccountConfirmLabel')}
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder="DELETE"
+            />
+            {deleteAccountError && <Alert variant="urgent">{deleteAccountError}</Alert>}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <Button variant="secondary" onPress={close}>
+                {dt('accountModal.deleteAccountConfirmCancel')}
+              </Button>
+              <Button
+                variant="urgent"
+                isPending={isDeletingAccount}
+                isDisabled={deleteConfirmText !== 'DELETE'}
+                onPress={() => void handleDeleteAccount()}
+              >
+                {dt('accountModal.deleteAccountConfirmAccept')}
+              </Button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </Modal>
   )
 }

@@ -11,6 +11,25 @@ const db = createDb(pool)
 
 await runMigrations(db, 'test')
 
+// A real in-process fake, not a mocked fetch — same convention as
+// oauth.integration.test.ts's fakeGoogle. requestDataExport (below)
+// actually publishes through this, letting these tests assert on what
+// was actually sent rather than trusting the adapter's own unit tests
+// alone.
+const publishedMessages: { topic: string; body: unknown }[] = []
+const fakePubSub = Bun.serve({
+  port: 0,
+  async fetch(req) {
+    const url = new URL(req.url)
+    const match = url.pathname.match(/\/v1\/projects\/[^/]+\/topics\/([^/]+):publish$/)
+    if (match?.[1] && req.method === 'POST') {
+      publishedMessages.push({ topic: match[1], body: await req.json() })
+      return Response.json({ messageIds: ['fake-message-id'] })
+    }
+    return new Response('not found', { status: 404 })
+  },
+})
+
 const app = createApp({
   db,
   authSecret: 'integration-test-secret',
@@ -23,10 +42,17 @@ const app = createApp({
     vaultAddr: process.env.TEST_VAULT_ADDR ?? 'http://localhost:8200',
     vaultToken: process.env.TEST_VAULT_TOKEN ?? 'dev-only-not-for-production',
   },
+  pubsub: {
+    provider: 'emulator',
+    emulatorUrl: `http://localhost:${fakePubSub.port}`,
+    projectId: 'app-integration-test',
+    topic: 'data-export-requests',
+  },
   identityHashKey: 'app-integration-test-identity-hash-key',
 })
 
 afterAll(async () => {
+  fakePubSub.stop(true)
   await db.destroy()
 })
 
@@ -275,6 +301,122 @@ describe('auth flow through the Hono app', () => {
       result: { data: { hasLinkedIdentity: boolean; hasProfile: boolean; profile: unknown } }
     }
     expect(body.result.data).toEqual({ hasLinkedIdentity: true, hasProfile: true, profile: null })
+  })
+
+  test('requestDataExport inserts a pending row and publishes it, and getDataExportStatus reports it back to the same user only', async () => {
+    const created = await app.request('/trpc/auth.createAnonymousSession', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    const cookie = extractCookie(created)
+
+    const before = publishedMessages.length
+    const requestRes = await app.request('/trpc/auth.requestDataExport', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({}),
+    })
+    expect(requestRes.status).toBe(200)
+
+    expect(publishedMessages.length).toBe(before + 1)
+    const published = publishedMessages[publishedMessages.length - 1]
+    expect(published?.topic).toBe('data-export-requests')
+
+    const statusRes = await app.request('/trpc/auth.getDataExportStatus', { headers: { cookie } })
+    expect(statusRes.status).toBe(200)
+    const statusBody = (await statusRes.json()) as {
+      result: { data: { id: string; status: string; downloadUrl: string | null }[] }
+    }
+    expect(statusBody.result.data).toHaveLength(1)
+    expect(statusBody.result.data[0]?.status).toBe('pending')
+    expect(statusBody.result.data[0]?.downloadUrl).toBeNull()
+
+    // A different user must never see this one's export request.
+    const otherSession = await app.request('/trpc/auth.createAnonymousSession', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    const otherCookie = extractCookie(otherSession)
+    const otherStatusRes = await app.request('/trpc/auth.getDataExportStatus', { headers: { cookie: otherCookie } })
+    const otherStatusBody = (await otherStatusRes.json()) as { result: { data: unknown[] } }
+    expect(otherStatusBody.result.data).toEqual([])
+
+    const unauthed = await app.request('/trpc/auth.getDataExportStatus')
+    expect(unauthed.status).toBe(401)
+  })
+
+  test('deleteAccount removes the user (cascading their profile) and clears the session cookie', async () => {
+    const created = await app.request('/trpc/auth.createAnonymousSession', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    const cookie = extractCookie(created)
+    const { result: session } = (await created.json()) as { result: { data: { userId: string } } }
+    await linkIdentity(db, session.data.userId, 'google', `delete-test-subject-${session.data.userId}`)
+    await app.request('/trpc/auth.completeProfile', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({
+        firstName: 'Delete',
+        lastName: 'Me',
+        gender: 'other',
+        country: 'GB',
+        mobileNumber: '+44 20 7946 0958',
+        stayAnonymous: true,
+      }),
+    })
+
+    const res = await app.request('/trpc/auth.deleteAccount', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie },
+      body: JSON.stringify({}),
+    })
+    expect(res.status).toBe(200)
+
+    const clearedCookie = res.headers.getSetCookie().find((c) => c.startsWith('mc_session=') && c.includes('Max-Age=0'))
+    expect(clearedCookie).toBeDefined()
+
+    const remainingUser = await db.selectFrom('users').select('id').where('id', '=', session.data.userId).executeTakeFirst()
+    expect(remainingUser).toBeUndefined()
+    const remainingProfile = await db
+      .selectFrom('user_profiles')
+      .select('id')
+      .where('user_id', '=', session.data.userId)
+      .executeTakeFirst()
+    expect(remainingProfile).toBeUndefined()
+
+    // The now-deleted account's own cookie is dead — same as any session
+    // for a user that no longer exists.
+    const whoAmIAfter = await app.request('/trpc/auth.whoAmI', { headers: { cookie } })
+    expect(whoAmIAfter.status).toBe(401)
+
+    const unauthed = await app.request('/trpc/auth.deleteAccount', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    expect(unauthed.status).toBe(401)
+  })
+
+  test('a banned account (banned_at set) is treated as unauthenticated on its very next request', async () => {
+    const created = await app.request('/trpc/auth.createAnonymousSession', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    const cookie = extractCookie(created)
+    const { result: session } = (await created.json()) as { result: { data: { userId: string } } }
+
+    const stillActive = await app.request('/trpc/auth.whoAmI', { headers: { cookie } })
+    expect(stillActive.status).toBe(200)
+
+    await db.updateTable('users').set({ banned_at: new Date() }).where('id', '=', session.data.userId).execute()
+
+    const afterBan = await app.request('/trpc/auth.whoAmI', { headers: { cookie } })
+    expect(afterBan.status).toBe(401)
   })
 })
 

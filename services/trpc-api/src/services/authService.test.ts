@@ -22,6 +22,9 @@ describe('resolveSession', () => {
         touchUser: async () => {
           throw new Error('should not be called')
         },
+        isBanned: async () => {
+          throw new Error('should not be called')
+        },
       },
       null,
     )
@@ -36,6 +39,9 @@ describe('resolveSession', () => {
         touchUser: async () => {
           throw new Error('should not be called')
         },
+        isBanned: async () => {
+          throw new Error('should not be called')
+        },
       },
       'bad-token',
     )
@@ -48,6 +54,9 @@ describe('resolveSession', () => {
       {
         verifyToken: () => ({ userId: 'user-1' }),
         touchUser: async () => false,
+        isBanned: async () => {
+          throw new Error('should not be called')
+        },
       },
       'good-token',
     )
@@ -55,11 +64,25 @@ describe('resolveSession', () => {
     expect(result).toBeNull()
   })
 
-  test('returns the user id when the token verifies and the touch succeeds', async () => {
+  test('returns null when the account is banned, even though the token and touch both succeed', async () => {
     const result = await resolveSession(
       {
         verifyToken: () => ({ userId: 'user-1' }),
         touchUser: async () => true,
+        isBanned: async () => true,
+      },
+      'good-token',
+    )
+
+    expect(result).toBeNull()
+  })
+
+  test('returns the user id when the token verifies, the touch succeeds, and the account is not banned', async () => {
+    const result = await resolveSession(
+      {
+        verifyToken: () => ({ userId: 'user-1' }),
+        touchUser: async () => true,
+        isBanned: async () => false,
       },
       'good-token',
     )

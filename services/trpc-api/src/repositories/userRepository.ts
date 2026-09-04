@@ -20,3 +20,32 @@ export async function userExists(db: Kysely<Database>, userId: string): Promise<
   const row = await db.selectFrom('users').select('id').where('id', '=', userId).executeTakeFirst()
   return row !== undefined
 }
+
+// The live-block half of enforcement (see migrations/0001_init.ts's
+// users.banned_at doc comment) — called on every session resolution
+// (authService.ts's resolveSession) to kill a still-existing session for
+// an account that's been banned but not yet deleted. Distinct from
+// account_bans/accountBanRepository.ts, which is the half that survives
+// deletion and blocks re-registration.
+export async function isUserBanned(db: Kysely<Database>, userId: string): Promise<boolean> {
+  const row = await db
+    .selectFrom('users')
+    .select('id')
+    .where('id', '=', userId)
+    .where('banned_at', 'is not', null)
+    .executeTakeFirst()
+
+  return row !== undefined
+}
+
+// GDPR right to erasure (Article 17) — the self-service "delete my
+// account" mutation (accountDeletionService.ts). Existing cascade FKs
+// clean up user_identities, user_profiles, session_users, messages,
+// moderation_events, feedback_ratings, and data_export_requests;
+// session_reports.reporter_user_id sets null instead of cascading (see
+// migrations/0001_init.ts) so a report this user filed about someone
+// else survives them. account_bans/account_ban_evidence are untouched by
+// construction — they're never foreign-keyed to this row.
+export async function deleteUser(db: Kysely<Database>, userId: string): Promise<void> {
+  await db.deleteFrom('users').where('id', '=', userId).execute()
+}

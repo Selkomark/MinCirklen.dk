@@ -33,6 +33,9 @@ const TEST_VAULT = {
   vaultAddr: process.env.TEST_VAULT_ADDR ?? 'http://localhost:8200',
   vaultToken: process.env.TEST_VAULT_TOKEN ?? 'dev-only-not-for-production',
 }
+// Never actually called by anything this file exercises — see
+// app.integration.test.ts's identical comment.
+const TEST_PUBSUB = { provider: 'gcp' as const, projectId: 'oauth-integration-test', topic: 'data-export-requests' }
 
 function base64url(input: string): string {
   return Buffer.from(input).toString('base64url')
@@ -87,6 +90,7 @@ beforeAll(async () => {
     internalServiceSecret: 'oauth-integration-test-internal-secret',
     publicBaseUrl: PUBLIC_BASE_URL,
     vault: TEST_VAULT,
+    pubsub: TEST_PUBSUB,
     identityHashKey: IDENTITY_HASH_KEY,
     googleClientId: CLIENT_ID,
     googleClientSecret: CLIENT_SECRET,
@@ -157,6 +161,43 @@ describe('GET /auth/callback/google', () => {
       .where('provider_subject_hash', '=', subjectHash)
       .executeTakeFirstOrThrow()
     expect(linked.user_id).not.toBeNull()
+  })
+
+  test('a banned identity is rejected before creating or linking any user', async () => {
+    nextSubject = `subject-${crypto.randomUUID()}`
+    const subjectHash = hashSubject(nextSubject)
+
+    await db
+      .insertInto('account_bans')
+      .values({
+        identity_hash: subjectHash,
+        provider: 'google',
+        reason_category: 'harassment',
+        decision_summary: 'integration test ban',
+        banned_by: 'oauth.integration.test.ts',
+      })
+      .execute()
+
+    const { stateCookie, state } = await startLogin()
+    const res = await app.request(`/auth/callback/google?code=fake-code&state=${state}`, {
+      headers: { cookie: stateCookie },
+    })
+
+    expect(res.status).toBe(302)
+    expect(res.headers.get('location')).toBe(`${PUBLIC_BASE_URL}/login?error=account_banned`)
+    // Whatever mc_session the browser walked in with is explicitly
+    // cleared (Max-Age=0), never left as a real, usable session cookie —
+    // see oauthController.ts's ban-rejection branch.
+    const rawSessionCookie = res.headers.getSetCookie().find((c) => c.startsWith('mc_session='))
+    expect(rawSessionCookie).toContain('Max-Age=0')
+
+    const linked = await db
+      .selectFrom('user_identities')
+      .select('id')
+      .where('provider', '=', 'google')
+      .where('provider_subject_hash', '=', subjectHash)
+      .executeTakeFirst()
+    expect(linked).toBeUndefined()
   })
 
   test('a repeat login for the same subject reuses the user and redirects to /start once a profile exists', async () => {
@@ -380,6 +421,7 @@ describe('when Google login is not configured', () => {
       internalServiceSecret: 'oauth-integration-test-internal-secret',
       publicBaseUrl: PUBLIC_BASE_URL,
       vault: TEST_VAULT,
+      pubsub: TEST_PUBSUB,
       identityHashKey: IDENTITY_HASH_KEY,
     })
 

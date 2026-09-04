@@ -1,9 +1,11 @@
 import { z } from 'zod'
 
 // The platform's supported UI languages (see services/web-app/src/i18n.ts).
-// `nb` (Norwegian Bokmål) rather than a bare `no`, matching the IETF/BCP-47
-// tag i18next and react-aria-components both expect.
-export const SUPPORTED_LANGUAGES = ['en', 'sv', 'da', 'nb', 'fi'] as const
+// Norwegian ('nb') and Finnish ('fi') were dropped (2026-09) — current
+// focus is English/Danish/Swedish; Norwegian is next-phase scaling, not
+// current scope. Re-add both together with their locale files when that
+// phase starts.
+export const SUPPORTED_LANGUAGES = ['en', 'sv', 'da'] as const
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number]
 
 export const GENDERS = ['male', 'female', 'other'] as const
@@ -37,6 +39,16 @@ export const createUserProfileInputSchema = z.object({
     .refine(isValidTimeZone, 'Invalid IANA timezone')
     .nullable()
     .optional(),
+  // Consent to this user's messages being used as AI training source
+  // material — true means consented. Schema-level default is false (not
+  // consented) as the safe fallback for any caller that omits this
+  // entirely; RegisterPage.tsx's own checkbox default (pre-checked, a
+  // deliberate product decision — see TRAINING_CONSIDERATIONS.md in the
+  // moderation-engine repo for the known GDPR Recital 32 gap that choice
+  // carries) is a separate, UI-level default, not this one. Also
+  // editable later from the Account modal's Privacy & data section
+  // (SessionPage.tsx's AccountModal), unchecked by default there.
+  trainingConsent: z.boolean().optional().default(false),
 })
 
 export type CreateUserProfileInput = z.infer<typeof createUserProfileInputSchema>
@@ -54,6 +66,7 @@ export const userProfileSchema = z.object({
   createdAt: z.coerce.date(),
   language: z.string().nullable(),
   timezone: z.string().nullable(),
+  trainingConsent: z.boolean(),
 })
 
 export type UserProfile = z.infer<typeof userProfileSchema>
