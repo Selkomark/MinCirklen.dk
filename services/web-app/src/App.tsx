@@ -25,6 +25,16 @@ import './App.css'
 
 const BASE = import.meta.env.BASE_URL
 
+// Configurable so the real production admin path never has to appear in
+// this open-source repo — set VITE_ADMIN_ROUTE per deployment to whatever
+// segment that environment actually uses; local dev falls back to
+// "manage" when it's unset. Note the honest limit of this: it keeps the
+// path out of the source someone reads on GitHub, but a built JS bundle
+// still ships this string to every visitor's browser — it's not a secret
+// from anyone actually inspecting the live site, only from casual
+// repo/source review.
+const ADMIN_ROUTE_SEGMENT = import.meta.env.VITE_ADMIN_ROUTE || 'manage'
+
 export const landingPath = () => BASE
 export const systemDesignPath = () => `${BASE}system-design`
 export const startPath = () => `${BASE}start`
@@ -34,7 +44,8 @@ export const sessionPath = (sessionId: string) => `${BASE}s/${sessionId}`
 export const loginPath = () => `${BASE}login`
 export const registerPath = () => `${BASE}register`
 export const moderationTransparencyPath = () => `${BASE}moderation-transparency`
-export const managePath = () => `${BASE}manage`
+export type ManageSection = 'review' | 'roles' | 'users'
+export const managePath = (section?: ManageSection) => `${BASE}${ADMIN_ROUTE_SEGMENT}${section ? `/${section}` : ''}`
 
 type Route =
   | { name: 'landing' }
@@ -47,7 +58,7 @@ type Route =
   | { name: 'login' }
   | { name: 'register' }
   | { name: 'moderation-transparency' }
-  | { name: 'manage' }
+  | { name: 'manage'; section: ManageSection | null }
   | { name: 'not-found' }
 
 // Top-level path segments the app itself owns. Public page slugs (privacy-policy, etc.)
@@ -61,12 +72,10 @@ const RESERVED_TOP_LEVEL_SEGMENTS = [
   'login',
   'register',
   'moderation-transparency',
-  'manage',
-] as const
+  ADMIN_ROUTE_SEGMENT,
+]
 
-const publicPageCollision = PUBLIC_PAGE_ORDER.find((id) =>
-  (RESERVED_TOP_LEVEL_SEGMENTS as readonly string[]).includes(id),
-)
+const publicPageCollision = PUBLIC_PAGE_ORDER.find((id) => RESERVED_TOP_LEVEL_SEGMENTS.includes(id))
 if (publicPageCollision) {
   throw new Error(
     `Public page id "${publicPageCollision}" collides with a reserved app route (${RESERVED_TOP_LEVEL_SEGMENTS.join(', ')}) — rename the page.`,
@@ -97,7 +106,16 @@ function parseRoute(pathname: string): Route {
   if (normalized === 'login') return { name: 'login' }
   if (normalized === 'register') return { name: 'register' }
   if (normalized === 'moderation-transparency') return { name: 'moderation-transparency' }
-  if (normalized === 'manage') return { name: 'manage' }
+
+  // Manual split, not a regex built from ADMIN_ROUTE_SEGMENT — that
+  // segment is operator-configured (VITE_ADMIN_ROUTE), not a literal to
+  // safely interpolate into a RegExp.
+  const adminSegments = normalized.split('/')
+  if (adminSegments[0] === ADMIN_ROUTE_SEGMENT && adminSegments.length <= 2) {
+    const sub = adminSegments[1]
+    if (sub === undefined) return { name: 'manage', section: null }
+    if (sub === 'review' || sub === 'roles' || sub === 'users') return { name: 'manage', section: sub }
+  }
 
   const sessionMatch = normalized.match(/^s\/([^/]+)$/)
   if (sessionMatch) return { name: 'session', sessionId: sessionMatch[1] }
@@ -265,7 +283,9 @@ function Shell() {
       <div
         className={[
           'ds-shell-view',
-          route.name === 'session' || route.name === 'system-design' ? 'ds-shell-view--fixed' : 'ds-shell-view--scroll',
+          route.name === 'session' || route.name === 'system-design' || route.name === 'manage'
+            ? 'ds-shell-view--fixed'
+            : 'ds-shell-view--scroll',
         ].join(' ')}
       >
         {route.name === 'system-design' && <Catalog />}
@@ -302,7 +322,9 @@ function Shell() {
         {route.name === 'register' && authStatus.kind === 'needs-profile' && (
           <RegisterPage onComplete={() => navigate(startPath())} />
         )}
-        {route.name === 'manage' && authStatus.kind === 'verified' && <ManagePage />}
+        {route.name === 'manage' && authStatus.kind === 'verified' && (
+          <ManagePage section={route.section} onNavigate={(section) => navigate(managePath(section))} />
+        )}
       </div>
       <ToastRegionRoot dismissLabel={ct('toast.dismiss')} />
     </div>

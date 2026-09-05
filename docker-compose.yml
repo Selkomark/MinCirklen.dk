@@ -440,6 +440,11 @@ services:
       # Vite only exposes VITE_-prefixed vars to client code, and unset is
       # a valid, deliberate default — see src/sentry.ts's own comment.
       VITE_SENTRY_DSN: ${VITE_SENTRY_DSN:-}
+      # The admin area's URL segment (App.tsx's ADMIN_ROUTE_SEGMENT) —
+      # unset here falls back to "manage" for local dev. Set to something
+      # deployment-specific in prod's own env, never committed, so the
+      # real path never has to appear in this open-source repo.
+      VITE_ADMIN_ROUTE: ${VITE_ADMIN_ROUTE:-}
     ports:
       - '5190:5190'
     volumes:
