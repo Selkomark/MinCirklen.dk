@@ -10,6 +10,10 @@ interface UserWithRoles {
   id: string
   createdAt: string
   bannedAt: string | null
+  // Decrypted and masked server-side (rbacRepository.ts::maskEmail) — the
+  // unmasked address is never sent to the browser. Null for a fully
+  // anonymous user who never linked Google.
+  emailMasked: string | null
   roles: { id: string; name: string }[]
 }
 
@@ -38,6 +42,7 @@ function EditRolesRow({ user, allRoles, onSaved }: { user: UserWithRoles; allRol
     return (
       <tr>
         <td style={{ fontFamily: 'monospace', fontSize: 'var(--font-size-xs)' }}>{user.id}</td>
+        <td>{user.emailMasked ?? <span style={{ color: 'var(--text-secondary)' }}>—</span>}</td>
         <td>
           {user.roles.length === 0 ? (
             <span style={{ color: 'var(--text-secondary)' }}>—</span>
@@ -64,6 +69,7 @@ function EditRolesRow({ user, allRoles, onSaved }: { user: UserWithRoles; allRol
   return (
     <tr>
       <td style={{ fontFamily: 'monospace', fontSize: 'var(--font-size-xs)' }}>{user.id}</td>
+      <td>{user.emailMasked ?? <span style={{ color: 'var(--text-secondary)' }}>—</span>}</td>
       <td colSpan={2}>
         <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
           {allRoles.map((role) => (
@@ -133,6 +139,7 @@ export function UsersTab() {
           <thead>
             <tr>
               <th>User</th>
+              <th>Email</th>
               <th>Roles</th>
               <th>Status</th>
               <th></th>

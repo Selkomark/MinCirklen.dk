@@ -24,11 +24,31 @@ interface NavItem {
   permission: string
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { section: 'review', label: 'Review queue', permission: 'moderation_events.review' },
-  { section: 'roles', label: 'Roles', permission: 'roles.read' },
-  { section: 'users', label: 'Users', permission: 'users.read' },
+interface NavGroup {
+  label: string
+  items: NavItem[]
+}
+
+// Grouped, not flat — "Access control" reads as one cohesive section for
+// whoever holds roles.read/users.read, same as selkomark.com's own
+// "Governance" grouping of Users+Roles. A group renders only if at least
+// one of its items is visible to the current user (see visibleGroups
+// below); an empty group would be a dead heading.
+const NAV_GROUPS: NavGroup[] = [
+  {
+    label: 'Moderation',
+    items: [{ section: 'review', label: 'Review queue', permission: 'moderation_events.review' }],
+  },
+  {
+    label: 'Access control',
+    items: [
+      { section: 'users', label: 'Users', permission: 'users.read' },
+      { section: 'roles', label: 'Roles & permissions', permission: 'roles.read' },
+    ],
+  },
 ]
+
+const NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap((group) => group.items)
 
 // Clicking the brand mark stays inside /manage — "back to the site itself"
 // is the sidebar's own dedicated link below, a different action.
@@ -110,7 +130,10 @@ function Sidebar({
   onNavigate: (section: ManageSection) => void
   onLogoClick: () => void
 }) {
-  const visibleItems = NAV_ITEMS.filter((item) => hasAccess(access, item.permission))
+  const visibleGroups = NAV_GROUPS.map((group) => ({
+    ...group,
+    items: group.items.filter((item) => hasAccess(access, item.permission)),
+  })).filter((group) => group.items.length > 0)
 
   return (
     <aside
@@ -129,14 +152,27 @@ function Sidebar({
       </div>
 
       <nav style={{ flex: 1, padding: '0 12px', display: 'flex', flexDirection: 'column', gap: 2, overflowY: 'auto' }}>
-        <div style={{ padding: '8px 12px 4px', fontSize: 'var(--font-size-xs)', fontWeight: 'var(--font-weight-bold)', color: SIDEBAR_TEXT_MUTED, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-          Manage
-        </div>
-        {visibleItems.length === 0 ? (
+        {visibleGroups.length === 0 ? (
           <div style={{ padding: '8px 12px', fontSize: 'var(--font-size-sm)', color: SIDEBAR_TEXT_MUTED }}>No sections available</div>
         ) : (
-          visibleItems.map((item) => (
-            <NavLink key={item.section} item={item} isActive={item.section === activeSection} onNavigate={onNavigate} />
+          visibleGroups.map((group) => (
+            <div key={group.label} style={{ marginBottom: 4 }}>
+              <div
+                style={{
+                  padding: '8px 12px 4px',
+                  fontSize: 'var(--font-size-xs)',
+                  fontWeight: 'var(--font-weight-bold)',
+                  color: SIDEBAR_TEXT_MUTED,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.04em',
+                }}
+              >
+                {group.label}
+              </div>
+              {group.items.map((item) => (
+                <NavLink key={item.section} item={item} isActive={item.section === activeSection} onNavigate={onNavigate} />
+              ))}
+            </div>
           ))
         )}
       </nav>

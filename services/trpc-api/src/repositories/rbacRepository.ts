@@ -1,5 +1,20 @@
 import type { Database } from '@mincirklen/shared'
 import type { Kysely } from 'kysely'
+import { type KmsConfig, decryptField } from '../adapters/kmsAdapter'
+
+// Never ships the full plaintext address to the browser for a list view —
+// decrypted and masked here, server-side, so the mask can't be trivially
+// undone from devtools/network tab the way a client-side mask could be.
+// Keeps the first character of the local part and the full domain (useful
+// for spotting patterns/duplicates), masks the rest of the local part with
+// a fixed-length run of asterisks (not length-revealing).
+export function maskEmail(email: string): string {
+  const atIndex = email.indexOf('@')
+  if (atIndex <= 0) return '***'
+  const local = email.slice(0, atIndex)
+  const domain = email.slice(atIndex + 1)
+  return `${local[0]}***@${domain}`
+}
 
 export interface Role {
   id: string
@@ -190,6 +205,9 @@ export interface UserWithRoles {
   id: string
   createdAt: Date
   bannedAt: Date | null
+  // Masked (see maskEmail above), or null for a fully anonymous user who
+  // never linked Google. The unmasked address never leaves this process.
+  emailMasked: string | null
   roles: { id: string; name: string }[]
 }
 
@@ -198,11 +216,12 @@ export interface UserWithRoles {
 // messageRepository.ts::listMessages.
 export async function listUsersWithRoles(
   db: Kysely<Database>,
+  kms: KmsConfig,
   params: { cursor?: string; limit: number },
 ): Promise<{ users: UserWithRoles[]; nextCursor: string | null }> {
   let query = db
     .selectFrom('users')
-    .select(['id', 'created_at', 'banned_at'])
+    .select(['id', 'created_at', 'banned_at', 'email_ciphertext'])
     .orderBy('created_at', 'desc')
     .orderBy('id', 'desc')
     .limit(params.limit + 1)
@@ -233,12 +252,15 @@ export async function listUsersWithRoles(
     rolesByUser.set(row.user_id, list)
   }
 
-  const users = page.map((row) => ({
-    id: row.id,
-    createdAt: row.created_at,
-    bannedAt: row.banned_at,
-    roles: rolesByUser.get(row.id) ?? [],
-  }))
+  const users = await Promise.all(
+    page.map(async (row) => ({
+      id: row.id,
+      createdAt: row.created_at,
+      bannedAt: row.banned_at,
+      emailMasked: row.email_ciphertext ? maskEmail(await decryptField(kms, row.email_ciphertext)) : null,
+      roles: rolesByUser.get(row.id) ?? [],
+    })),
+  )
 
   return { users, nextCursor: hasMore ? (page[page.length - 1]?.id ?? null) : null }
 }

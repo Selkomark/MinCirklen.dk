@@ -86,7 +86,7 @@ export const rbacRouter = router({
   users: router({
     list: hasPermission('users.read')
       .input(listUsersInputSchema)
-      .query(({ ctx, input }) => listUsersWithRoles(ctx.appEnv.db, input)),
+      .query(({ ctx, input }) => listUsersWithRoles(ctx.appEnv.db, ctx.appEnv.vault, input)),
 
     updateRoles: hasPermission('users.update')
       .input(updateUserRolesInputSchema)
