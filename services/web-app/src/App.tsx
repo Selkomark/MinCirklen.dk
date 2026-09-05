@@ -15,6 +15,7 @@ import { StartNewPage } from './pages/start/StartNewPage'
 import { LoginPage } from './pages/LoginPage'
 import { RegisterPage } from './pages/RegisterPage'
 import { ModerationTransparencyPage } from './pages/ModerationTransparencyPage'
+import { ManagePage } from './pages/manage/ManagePage'
 import { ErrorPage } from './pages/ErrorPage'
 import { ErrorBoundary } from './ErrorBoundary'
 import { PUBLIC_PAGES, PUBLIC_PAGE_ORDER, type PublicPageId } from './publicPages/pages'
@@ -33,6 +34,7 @@ export const sessionPath = (sessionId: string) => `${BASE}s/${sessionId}`
 export const loginPath = () => `${BASE}login`
 export const registerPath = () => `${BASE}register`
 export const moderationTransparencyPath = () => `${BASE}moderation-transparency`
+export const managePath = () => `${BASE}manage`
 
 type Route =
   | { name: 'landing' }
@@ -45,6 +47,7 @@ type Route =
   | { name: 'login' }
   | { name: 'register' }
   | { name: 'moderation-transparency' }
+  | { name: 'manage' }
   | { name: 'not-found' }
 
 // Top-level path segments the app itself owns. Public page slugs (privacy-policy, etc.)
@@ -58,6 +61,7 @@ const RESERVED_TOP_LEVEL_SEGMENTS = [
   'login',
   'register',
   'moderation-transparency',
+  'manage',
 ] as const
 
 const publicPageCollision = PUBLIC_PAGE_ORDER.find((id) =>
@@ -93,6 +97,7 @@ function parseRoute(pathname: string): Route {
   if (normalized === 'login') return { name: 'login' }
   if (normalized === 'register') return { name: 'register' }
   if (normalized === 'moderation-transparency') return { name: 'moderation-transparency' }
+  if (normalized === 'manage') return { name: 'manage' }
 
   const sessionMatch = normalized.match(/^s\/([^/]+)$/)
   if (sessionMatch) return { name: 'session', sessionId: sessionMatch[1] }
@@ -182,7 +187,7 @@ export function useAuthStatus(gateKey: string | null): AuthStatus {
 // these has a matching protectedProcedure on the backend (see
 // controllers/trpc.ts), this is the UI-side half of the same gate, not a
 // replacement for it.
-const GATED_ROUTE_NAMES = new Set(['login', 'register', 'start', 'start-join', 'start-new', 'session'])
+const GATED_ROUTE_NAMES = new Set(['login', 'register', 'start', 'start-join', 'start-new', 'session', 'manage'])
 
 function useRoute() {
   const [pathname, setPathname] = useState(() => window.location.pathname)
@@ -228,7 +233,13 @@ function Shell() {
       return
     }
 
-    if (route.name === 'start' || route.name === 'start-join' || route.name === 'start-new' || route.name === 'session') {
+    if (
+      route.name === 'start' ||
+      route.name === 'start-join' ||
+      route.name === 'start-new' ||
+      route.name === 'session' ||
+      route.name === 'manage'
+    ) {
       if (authStatus.kind === 'anonymous') {
         navigate(loginPath())
       } else if (authStatus.kind === 'needs-profile') {
@@ -291,6 +302,7 @@ function Shell() {
         {route.name === 'register' && authStatus.kind === 'needs-profile' && (
           <RegisterPage onComplete={() => navigate(startPath())} />
         )}
+        {route.name === 'manage' && authStatus.kind === 'verified' && <ManagePage />}
       </div>
       <ToastRegionRoot dismissLabel={ct('toast.dismiss')} />
     </div>

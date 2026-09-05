@@ -16,6 +16,15 @@ export async function touchUser(db: Kysely<Database>, userId: string): Promise<b
   return (result.numUpdatedRows ?? 0n) > 0n
 }
 
+// Called on every Google login (oauthController.ts), not just the first —
+// keeps the stored value in sync with whatever Google reports as the
+// account's current verified email. See migrations/0001_init.ts's
+// email_ciphertext doc comment for why this is nullable at the schema
+// level despite being essential once a Google identity exists.
+export async function setEmail(db: Kysely<Database>, userId: string, emailCiphertext: string): Promise<void> {
+  await db.updateTable('users').set({ email_ciphertext: emailCiphertext }).where('id', '=', userId).execute()
+}
+
 export async function userExists(db: Kysely<Database>, userId: string): Promise<boolean> {
   const row = await db.selectFrom('users').select('id').where('id', '=', userId).executeTakeFirst()
   return row !== undefined

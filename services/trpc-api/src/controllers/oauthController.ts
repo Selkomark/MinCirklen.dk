@@ -3,12 +3,20 @@ import { createSessionToken, verifySessionToken } from '@mincirklen/shared'
 import { Hono, type Context } from 'hono'
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie'
 import { GoogleOAuthError, buildAuthorizationUrl, exchangeCodeForTokens, verifyIdToken } from '../adapters/googleOAuthAdapter'
+import { encryptField } from '../adapters/kmsAdapter'
 import { hashIdentitySubject } from '../auth/identityHash'
 import { SESSION_COOKIE_NAME, buildLegacySessionCookieClear, buildSessionCookie, sessionCookieDomain, type AppEnv } from '../context'
 import { findBanByIdentityHash } from '../repositories/accountBanRepository'
+import {
+  assignRoleToUser,
+  findRoleByName,
+  isAdminBootstrapCompleted,
+  markAdminBootstrapCompleted,
+} from '../repositories/rbacRepository'
 import { findUserIdByIdentity, linkIdentity } from '../repositories/userIdentityRepository'
-import { insertUser, userExists } from '../repositories/userRepository'
+import { insertUser, setEmail, userExists } from '../repositories/userRepository'
 import { userProfileExists } from '../repositories/userProfileRepository'
+import { bootstrapAdminIfMasterEmail } from '../services/adminBootstrapService'
 import { resolveGoogleLogin } from '../services/googleAuthService'
 
 const OAUTH_STATE_COOKIE_NAME = 'mc_oauth_state'
@@ -95,7 +103,7 @@ export function createOAuthController(env: AppEnv): Hono {
 
     try {
       const { idToken } = await exchangeCodeForTokens(config, code)
-      const subject = (await verifyIdToken(config, idToken)).subject
+      const { subject, email } = await verifyIdToken(config, idToken)
       const subjectHash = hashIdentitySubject(subject, env.identityHashKey)
 
       // The piece that actually survives account deletion: this identity
@@ -129,6 +137,25 @@ export function createOAuthController(env: AppEnv): Hono {
           userExists: (id) => userExists(env.db, id),
         },
         existingUserId,
+      )
+
+      // Essential account-operation data (CHARTER.md §4's carved-out
+      // exception) — kept in sync with Google on every login, not just
+      // set once. Encrypted the same way as user_profiles.pii_ciphertext.
+      const emailCiphertext = await encryptField(env.vault, email)
+      await setEmail(env.db, userId, emailCiphertext)
+
+      // One-time master-admin bootstrap — see adminBootstrapService.ts.
+      // No-op if MASTER_USER_EMAIL is unset or already claimed by another
+      // user.
+      await bootstrapAdminIfMasterEmail(
+        {
+          isBootstrapCompleted: () => isAdminBootstrapCompleted(env.db),
+          findRoleByName: (name) => findRoleByName(env.db, name),
+          assignRole: (uid, roleId) => assignRoleToUser(env.db, uid, roleId),
+          markBootstrapCompleted: () => markAdminBootstrapCompleted(env.db),
+        },
+        { userId, email, masterEmail: env.masterUserEmail },
       )
 
       const token = createSessionToken(userId, env.authSecret)

@@ -49,3 +49,19 @@ export const verifiedProcedure = protectedProcedure.use(async ({ ctx, next }) =>
   }
   return next({ ctx })
 })
+
+// RBAC gate for /manage and everything it calls. Built on verifiedProcedure
+// (not the bare protectedProcedure) — an admin is the same kind of user as
+// anyone else on the platform, just one holding a permission, not a
+// separate identity. ctx.permissions is hydrated fresh per request (see
+// context.ts::createContextFactory), so a role change takes effect on the
+// user's very next request with no re-login needed. The seeded `admin`
+// role holds every permission directly (migrations/0001_init.ts), so a
+// plain membership check already covers admins — no separate bypass.
+export const hasPermission = (slug: string) =>
+  verifiedProcedure.use(({ ctx, next }) => {
+    if (!ctx.permissions.includes(slug)) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: `Missing permission: ${slug}` })
+    }
+    return next({ ctx })
+  })

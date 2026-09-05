@@ -24,6 +24,19 @@ export async function up(db: Kysely<any>): Promise<void> {
     // column's only job is stopping continued use of a still-existing
     // row. Set manually via Adminer for now — see docs/gdpr-runbook.md.
     .addColumn('banned_at', 'timestamptz')
+    // Essential account-operation data once it exists, not optional
+    // profile PII (see CHARTER.md §4's carved-out exception, added
+    // alongside this column) — but nullable, not required, because a
+    // `users` row can exist fully anonymously with no Google identity
+    // ever linked (authService.ts's insertUser path) and therefore no
+    // email at all. Only set for users who complete Google login (scope
+    // now includes `email`, verified via `email_verified` before it's
+    // ever trusted). Encrypted the same way as user_profiles.pii_ciphertext
+    // below. Lives on `users` directly (not user_profiles) because it must
+    // exist from first Google login, before a profile is ever created,
+    // and so it's wiped for free by this table's own cascade/delete on
+    // account deletion — no separate cleanup needed.
+    .addColumn('email_ciphertext', 'text')
     .execute()
 
   await db.schema
@@ -142,6 +155,93 @@ export async function up(db: Kysely<any>): Promise<void> {
       'account_ban_evidence_type_check',
       sql`evidence_type in ('message','moderation_event','operator_note')`,
     )
+    .execute()
+
+  // RBAC — normalized roles/permissions, mirroring the mechanics already
+  // proven out in the sibling selkomark.com repo (role_permissions/
+  // user_roles as real many-to-many join tables, not a JSON/array column,
+  // so a role's effective permission set is always a plain join, not
+  // app-level parsing). `/manage` (services/web-app) and its tRPC
+  // procedures (services/trpc-api/src/controllers/trpc.ts's
+  // `hasPermission`) are the consumers. `is_system` protects the seeded
+  // `admin` role from having its permissions edited away by mistake.
+  await db.schema
+    .createTable('roles')
+    .addColumn('id', 'uuid', (col) => col.primaryKey().defaultTo(sql`gen_random_uuid()`))
+    .addColumn('name', 'text', (col) => col.notNull().unique())
+    .addColumn('description', 'text')
+    .addColumn('is_system', 'boolean', (col) => col.notNull().defaultTo(false))
+    .addColumn('created_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`now()`))
+    .execute()
+
+  // slug convention: `<resource>.<action>` (e.g. `roles.read`,
+  // `moderation_events.review`) — plain runtime strings, checked via
+  // array membership, not a compile-time union; the catalog grows as new
+  // admin capabilities are actually built, not ahead of need.
+  await db.schema
+    .createTable('permissions')
+    .addColumn('id', 'uuid', (col) => col.primaryKey().defaultTo(sql`gen_random_uuid()`))
+    .addColumn('slug', 'text', (col) => col.notNull().unique())
+    .addColumn('description', 'text')
+    .execute()
+
+  await db.schema
+    .createTable('role_permissions')
+    .addColumn('role_id', 'uuid', (col) => col.notNull().references('roles.id').onDelete('cascade'))
+    .addColumn('permission_id', 'uuid', (col) => col.notNull().references('permissions.id').onDelete('cascade'))
+    .addPrimaryKeyConstraint('role_permissions_pk', ['role_id', 'permission_id'])
+    .execute()
+
+  await db.schema
+    .createTable('user_roles')
+    .addColumn('user_id', 'uuid', (col) => col.notNull().references('users.id').onDelete('cascade'))
+    .addColumn('role_id', 'uuid', (col) => col.notNull().references('roles.id').onDelete('cascade'))
+    .addPrimaryKeyConstraint('user_roles_pk', ['user_id', 'role_id'])
+    .execute()
+
+  // Seed: one system role (`admin`, holding every permission below) plus
+  // the permission slugs this pass's features actually need.
+  // MASTER_USER_EMAIL-driven bootstrap (adminBootstrapService.ts) grants
+  // this role to whichever account first logs in with that email — see
+  // controllers/oauthController.ts.
+  const adminRole = await db
+    .insertInto('roles')
+    .values({ name: 'admin', description: 'Full platform access', is_system: true })
+    .returning('id')
+    .executeTakeFirstOrThrow()
+
+  const permissionSlugs: Array<{ slug: string; description: string }> = [
+    { slug: 'admin.access', description: 'Access the /manage admin area' },
+    { slug: 'roles.read', description: 'View roles and their permissions' },
+    { slug: 'roles.create', description: 'Create new roles' },
+    { slug: 'roles.update', description: "Edit a role's name/description/permissions" },
+    { slug: 'users.read', description: 'View users and their assigned roles' },
+    { slug: 'users.update', description: "Change a user's assigned roles" },
+    { slug: 'moderation_events.review', description: 'Review flagged/crisis moderation events' },
+  ]
+
+  const insertedPermissions = await db
+    .insertInto('permissions')
+    .values(permissionSlugs)
+    .returning('id')
+    .execute()
+
+  await db
+    .insertInto('role_permissions')
+    .values(insertedPermissions.map((p) => ({ role_id: adminRole.id, permission_id: p.id })))
+    .execute()
+
+  // A permanent, one-way marker for the master-admin bootstrap
+  // (adminBootstrapService.ts) — deliberately NOT "does any user currently
+  // hold the admin role," which would re-arm itself if the sole admin is
+  // ever removed/deroled later. Once a row exists here, the
+  // MASTER_USER_EMAIL bootstrap never fires again, full stop — closing
+  // off the scenario where someone with prod env-var access changes it
+  // later and logs in hoping to re-trigger elevation.
+  await db.schema
+    .createTable('admin_bootstrap')
+    .addColumn('id', 'uuid', (col) => col.primaryKey().defaultTo(sql`gen_random_uuid()`))
+    .addColumn('completed_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`now()`))
     .execute()
 
   await db.schema
@@ -280,6 +380,12 @@ export async function up(db: Kysely<any>): Promise<void> {
     .addColumn('human_reviewed', 'boolean', (col) => col.notNull().defaultTo(false))
     .addColumn('human_review_outcome', 'text')
     .addColumn('reviewed_at', 'timestamptz')
+    // Attributes a review decision to the real user who made it — reviewers
+    // are just regular users holding the `moderation_events.review`
+    // permission, not a separate moderator identity. `set null`, not
+    // cascade: deleting the reviewing account must never destroy the
+    // historical review record itself, only its "who" attribution.
+    .addColumn('reviewed_by', 'uuid', (col) => col.references('users.id').onDelete('set null'))
     .addColumn('created_at', 'timestamptz', (col) => col.notNull().defaultTo(sql`now()`))
     .addCheckConstraint('moderation_events_classification_check', sql`classification in ('pass','flag','crisis')`)
     .addCheckConstraint(
@@ -370,6 +476,11 @@ export async function down(db: Kysely<any>): Promise<void> {
   await db.schema.dropTable('topics').execute()
   await db.schema.dropTable('account_ban_evidence').execute()
   await db.schema.dropTable('account_bans').execute()
+  await db.schema.dropTable('admin_bootstrap').execute()
+  await db.schema.dropTable('user_roles').execute()
+  await db.schema.dropTable('role_permissions').execute()
+  await db.schema.dropTable('permissions').execute()
+  await db.schema.dropTable('roles').execute()
   await db.schema.dropTable('user_profiles').execute()
   await db.schema.dropTable('user_identities').execute()
   await db.schema.dropTable('users').execute()

@@ -36,6 +36,8 @@ function validPayload(overrides: Record<string, unknown> = {}) {
     aud: CONFIG.clientId,
     iss: 'https://accounts.google.com',
     exp: Math.floor(Date.now() / 1000) + 3600,
+    email: 'person@example.com',
+    email_verified: true,
     ...overrides,
   }
 }
@@ -56,13 +58,13 @@ function mockFetch(handlers: { jwks?: () => Response; token?: () => Response }) 
 }
 
 describe('buildAuthorizationUrl', () => {
-  test('builds a minimal-scope authorization URL with the given state', () => {
+  test('builds an authorization URL requesting only openid+email, with the given state', () => {
     const url = new URL(buildAuthorizationUrl(CONFIG, 'the-state'))
     expect(url.origin + url.pathname).toBe('https://accounts.google.com/o/oauth2/v2/auth')
     expect(url.searchParams.get('client_id')).toBe(CONFIG.clientId)
     expect(url.searchParams.get('redirect_uri')).toBe(CONFIG.redirectUri)
     expect(url.searchParams.get('response_type')).toBe('code')
-    expect(url.searchParams.get('scope')).toBe('openid')
+    expect(url.searchParams.get('scope')).toBe('openid email')
     expect(url.searchParams.get('state')).toBe('the-state')
   })
 })
@@ -88,13 +90,31 @@ describe('verifyIdToken', () => {
   test('accepts a validly-signed, unexpired token for the right audience', async () => {
     mockFetch({ jwks: () => Response.json(JWKS_RESPONSE) })
     const token = signJwt(validPayload())
-    await expect(verifyIdToken(CONFIG, token)).resolves.toEqual({ subject: 'google-subject-123' })
+    await expect(verifyIdToken(CONFIG, token)).resolves.toEqual({
+      subject: 'google-subject-123',
+      email: 'person@example.com',
+    })
   })
 
   test('accepts the bare "accounts.google.com" issuer form too', async () => {
     mockFetch({ jwks: () => Response.json(JWKS_RESPONSE) })
     const token = signJwt(validPayload({ iss: 'accounts.google.com' }))
-    await expect(verifyIdToken(CONFIG, token)).resolves.toEqual({ subject: 'google-subject-123' })
+    await expect(verifyIdToken(CONFIG, token)).resolves.toEqual({
+      subject: 'google-subject-123',
+      email: 'person@example.com',
+    })
+  })
+
+  test('rejects a token with no email claim', async () => {
+    mockFetch({ jwks: () => Response.json(JWKS_RESPONSE) })
+    const token = signJwt(validPayload({ email: undefined }))
+    await expect(verifyIdToken(CONFIG, token)).rejects.toThrow('missing email')
+  })
+
+  test('rejects a token whose email is not verified', async () => {
+    mockFetch({ jwks: () => Response.json(JWKS_RESPONSE) })
+    const token = signJwt(validPayload({ email_verified: false }))
+    await expect(verifyIdToken(CONFIG, token)).rejects.toThrow('not verified')
   })
 
   test('rejects a malformed token with the wrong number of segments', async () => {

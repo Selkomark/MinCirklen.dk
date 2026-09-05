@@ -14,6 +14,44 @@ export interface UsersTable {
   // Null = not banned. Live-block only — see migrations/0001_init.ts and
   // AccountBansTable below for the ledger that survives deletion.
   banned_at: NullableTimestamp
+  // Essential account-operation data once it exists (CHARTER.md §4's
+  // carved-out exception), encrypted the same way as
+  // UserProfilesTable.pii_ciphertext — but nullable, since plenty of users
+  // stay fully anonymous with no Google identity ever linked and so never
+  // have one. See migrations/0001_init.ts.
+  email_ciphertext: string | null
+}
+
+export interface RolesTable {
+  id: Generated<string>
+  name: string
+  description: string | null
+  is_system: Generated<boolean>
+  created_at: Timestamp
+}
+
+export interface PermissionsTable {
+  id: Generated<string>
+  slug: string
+  description: string | null
+}
+
+export interface RolePermissionsTable {
+  role_id: string
+  permission_id: string
+}
+
+export interface UserRolesTable {
+  user_id: string
+  role_id: string
+}
+
+// A permanent, one-way marker: once a row exists, the MASTER_USER_EMAIL
+// bootstrap (adminBootstrapService.ts) never fires again — see
+// migrations/0001_init.ts's doc comment for the threat this closes off.
+export interface AdminBootstrapTable {
+  id: Generated<string>
+  completed_at: Timestamp
 }
 
 export interface SessionsTable {
@@ -82,6 +120,7 @@ export interface ModerationEventsTable {
   human_reviewed: Generated<boolean>
   human_review_outcome: 'true_positive' | 'false_positive' | 'true_negative' | 'false_negative' | null
   reviewed_at: NullableTimestamp
+  reviewed_by: string | null
   created_at: Timestamp
 }
 
@@ -196,4 +235,9 @@ export interface Database {
   account_bans: AccountBansTable
   account_ban_evidence: AccountBanEvidenceTable
   data_export_requests: DataExportRequestsTable
+  roles: RolesTable
+  permissions: PermissionsTable
+  role_permissions: RolePermissionsTable
+  user_roles: UserRolesTable
+  admin_bootstrap: AdminBootstrapTable
 }

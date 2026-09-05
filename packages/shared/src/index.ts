@@ -7,6 +7,7 @@ export * from './schemas/moderationEvent'
 export * from './schemas/userIdentity'
 export * from './schemas/userProfile'
 export * from './schemas/topic'
+export * from './schemas/rbac'
 
 export * from './constants/roundPacing'
 export * from './constants/session'

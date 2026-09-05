@@ -340,6 +340,10 @@ services:
       PUBLIC_BASE_URL: https://dev-mincirklen.dk
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      # Optional — the master-admin bootstrap (adminBootstrapService.ts), a
+      # one-time, self-disabling elevation for whichever account first logs
+      # in with this email. Real value lives in .env (gitignored), not here.
+      MASTER_USER_EMAIL: ${MASTER_USER_EMAIL:-}
       VAULT_ADDR: http://vault:8200
       VAULT_TOKEN: dev-only-not-for-production
       # Publish-only client for the data-export request pipeline (see

@@ -253,12 +253,18 @@ export async function applyHumanReviewOutcome(
   params: {
     moderationEventId: string
     outcome: 'true_positive' | 'false_positive' | 'true_negative' | 'false_negative'
+    reviewedBy: string
   },
 ): Promise<void> {
   await db.transaction().execute(async (trx) => {
     const event = await trx
       .updateTable('moderation_events')
-      .set({ human_reviewed: true, human_review_outcome: params.outcome, reviewed_at: sql`now()` })
+      .set({
+        human_reviewed: true,
+        human_review_outcome: params.outcome,
+        reviewed_at: sql`now()`,
+        reviewed_by: params.reviewedBy,
+      })
       .where('id', '=', params.moderationEventId)
       .returning(['message_id'])
       .executeTakeFirstOrThrow()

@@ -87,6 +87,9 @@ const app = createApp({
   // required to boot. See docs/local_dev.md / setup-oauth-env.sh.
   googleClientId: process.env.GOOGLE_CLIENT_ID || undefined,
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET || undefined,
+  // Optional — no admin exists until this is set and someone logs in with
+  // it. See services/adminBootstrapService.ts.
+  masterUserEmail: process.env.MASTER_USER_EMAIL || undefined,
 })
 
 const port = Number(process.env.PORT ?? 8787)

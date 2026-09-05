@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { PublicHeader } from '../PublicHeader'
 import { SiteFooter } from '../SiteFooter'
 import { Button } from '../components/Button'
@@ -9,7 +9,42 @@ import { useJsonLd } from '../useJsonLd'
 import { SITE_ORIGIN } from '../siteConfig'
 import { moderationTransparencyPath } from '../App'
 
-const METRICS = ['False-positive rate', 'False-negative rate', 'Incidents reviewed']
+interface TransparencyMetrics {
+  falsePositiveRate: number | null
+  falseNegativeRate: number | null
+  incidentsReviewed: number
+}
+
+function formatRate(rate: number | null): string {
+  return rate === null ? '—' : `${Math.round(rate * 100)}%`
+}
+
+// Fetched from moderation.transparencyMetrics — public, aggregate-only, no
+// auth needed (see services/trpc-api/src/controllers/moderationRouter.ts).
+// Falls back to "—" everywhere on a fetch failure, same as "no data yet" —
+// this section never has anything urgent to say if it can't load.
+function useTransparencyMetrics(): TransparencyMetrics | null {
+  const [metrics, setMetrics] = useState<TransparencyMetrics | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const res = await fetch('/api/trpc/moderation.transparencyMetrics')
+        if (!res.ok) return
+        const body = (await res.json()) as { result: { data: TransparencyMetrics } }
+        if (!cancelled) setMetrics(body.result.data)
+      } catch {
+        // Stays null — rendered the same as "no data yet".
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  return metrics
+}
 
 const PLATFORM_REPO_URL = 'https://github.com/Selkomark/MinCirklen.dk'
 
@@ -52,6 +87,7 @@ function Body({ children }: { children: ReactNode }) {
 
 export function ModerationTransparencyPage() {
   const path = moderationTransparencyPath()
+  const metrics = useTransparencyMetrics()
 
   usePageMeta({
     title: 'Moderation & Transparency — MinCirklen',
@@ -178,15 +214,19 @@ export function ModerationTransparencyPage() {
         <section>
           <SectionHeading>Transparency metrics</SectionHeading>
           <Body>
-            Once we have real pilot data, this section will show our moderation false-positive and
-            false-negative rates and a running summary of safety incidents — kept current, not published
-            once and forgotten. Until then, we're not going to publish placeholder numbers dressed up as
-            real ones.
+            Our moderation false-positive and false-negative rates and a running summary of safety
+            incidents — kept current, not published once and forgotten. We don't publish placeholder
+            numbers dressed up as real ones: a rate reads as "—" until there's enough reviewed data
+            behind it to mean something.
           </Body>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 'var(--space-4)' }}>
-            {METRICS.map((metric) => (
+            {[
+              { label: 'False-positive rate', value: formatRate(metrics?.falsePositiveRate ?? null) },
+              { label: 'False-negative rate', value: formatRate(metrics?.falseNegativeRate ?? null) },
+              { label: 'Incidents reviewed', value: metrics ? String(metrics.incidentsReviewed) : '—' },
+            ].map((metric) => (
               <div
-                key={metric}
+                key={metric.label}
                 style={{
                   border: '1px dashed var(--border-subtle)',
                   borderRadius: 'var(--radius-md)',
@@ -195,15 +235,17 @@ export function ModerationTransparencyPage() {
                 }}
               >
                 <div style={{ fontSize: 'var(--font-size-2xl)', fontWeight: 'var(--font-weight-bold)', color: 'var(--text-secondary)' }}>
-                  —
+                  {metric.value}
                 </div>
-                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', marginTop: 4 }}>{metric}</div>
+                <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', marginTop: 4 }}>{metric.label}</div>
               </div>
             ))}
           </div>
-          <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', marginTop: 'var(--space-3)' }}>
-            No pilot data yet.
-          </div>
+          {(metrics?.incidentsReviewed ?? 0) === 0 && (
+            <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)', marginTop: 'var(--space-3)' }}>
+              No pilot data yet.
+            </div>
+          )}
         </section>
 
         <section>

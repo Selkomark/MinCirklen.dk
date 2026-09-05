@@ -72,6 +72,8 @@ beforeAll(async () => {
           aud: CLIENT_ID,
           iss: 'https://accounts.google.com',
           exp: Math.floor(Date.now() / 1000) + 3600,
+          email: `${nextSubject}@example.com`,
+          email_verified: true,
         })
         return Response.json({ id_token: idToken })
       }

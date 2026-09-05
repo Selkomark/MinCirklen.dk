@@ -36,6 +36,20 @@ Real names, contact info, and precise location are never required.
 Anyone who wants to add identity later opts in explicitly, and only that
 person's own group ever sees it — never a public profile.
 
+Essential account-operation data (e.g. a login email) is the one
+exception: it may be collected as a condition of account creation when
+there is a legitimate, stated operational reason (account security,
+required user contact, legal/regulatory need) — never for building a
+public or lookup-able identity (that stays governed by principle 1). Any
+such data must be (a) disclosed plainly in Terms & Conditions as part of
+what's collected and why, (b) encrypted at rest the same way other
+identifying account data already is, and (c) fully deletable via the same
+account-deletion request that removes everything else — never retained
+past that request except where a *different*, already-documented legal
+basis requires it (see `docs/gdpr-runbook.md`). Added 2026-09-05, alongside
+the `/manage` RBAC system and its master-admin bootstrap, which is the
+first feature to rely on this exception.
+
 ## 5. Radical transparency as a safety mechanism
 
 Published moderation policy, published incident/transparency reports,

@@ -236,6 +236,10 @@ export const PUBLIC_PAGES: Record<PublicPageId, PublicPageData> = {
         body: "You agree to follow the Community guidelines: no soliciting, advertising, or attempting to contact another user outside a structured session; no sharing anyone's personal information, including your own.",
       },
       {
+        heading: 'Data we collect',
+        body: "To keep your account secure and to contact you about it, we collect and encrypt your email address as part of essential account data — this is not optional and not part of any public profile, and it's never used to build a directory or let anyone look you up. If you no longer want MinCirklen to hold your data, including your email, you can request full account deletion at any time; see Privacy and data in Settings.",
+      },
+      {
         heading: 'Moderation and enforcement',
         body: 'Sessions are monitored for safety, as described in Safety and moderation. We may end a session, remove a message, or remove an account at our discretion when these terms or the community guidelines are broken.',
       },

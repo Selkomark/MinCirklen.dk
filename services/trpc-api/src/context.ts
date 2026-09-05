@@ -7,6 +7,7 @@ import type { Kysely } from 'kysely'
 import type { GoogleOAuthEndpoints } from './adapters/googleOAuthAdapter'
 import type { KmsConfig } from './adapters/kmsAdapter'
 import type { PubSubConfig } from './adapters/pubsubAdapter'
+import { getUserRolesAndPermissions } from './repositories/rbacRepository'
 import { isUserBanned, touchUser } from './repositories/userRepository'
 import { resolveSession } from './services/authService'
 
@@ -85,6 +86,10 @@ export interface AppEnv {
   // a fake in-process Google, mirroring session.integration.test.ts's
   // fake moderation-service.
   googleOAuthEndpoints?: GoogleOAuthEndpoints
+  // The master-admin bootstrap (adminBootstrapService.ts) — optional, so
+  // the app boots fine with no admin configured yet. Compared against the
+  // verified email a user logs in with, never persisted anywhere itself.
+  masterUserEmail?: string
 }
 
 export interface AppContext {
@@ -98,6 +103,11 @@ export interface AppContext {
   resHeaders: Headers
   userId: string | null
   appEnv: AppEnv
+  // Hydrated fresh per request in createContextFactory (empty for
+  // anonymous/no-role users) — see rbacRepository.ts::getUserRolesAndPermissions
+  // and controllers/trpc.ts::hasPermission, which reads this.
+  roles: { id: string; name: string }[]
+  permissions: string[]
 }
 
 function bearerToken(c: HonoContext): string | null {
@@ -122,6 +132,10 @@ export function createContextFactory(env: AppEnv) {
       token,
     )
 
-    return { resHeaders: opts.resHeaders, userId, appEnv: env }
+    const { roles, permissions } = userId
+      ? await getUserRolesAndPermissions(env.db, userId)
+      : { roles: [], permissions: [] }
+
+    return { resHeaders: opts.resHeaders, userId, appEnv: env, roles, permissions }
   }
 }

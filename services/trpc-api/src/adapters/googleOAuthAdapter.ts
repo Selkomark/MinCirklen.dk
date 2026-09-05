@@ -45,10 +45,13 @@ export function buildAuthorizationUrl(config: GoogleOAuthConfig, state: string):
   url.searchParams.set('client_id', config.clientId)
   url.searchParams.set('redirect_uri', config.redirectUri)
   url.searchParams.set('response_type', 'code')
-  // Deliberately minimal — CHARTER.md anonymity-by-default + the roadmap's
-  // data-minimization principle mean the only thing needed is a stable
-  // dedup identifier (the `sub` claim), not email or profile.
-  url.searchParams.set('scope', 'openid')
+  // `email` was added 2026-09-05 alongside CHARTER.md §4's carved-out
+  // exception for essential account-operation data — email is now
+  // required contact/record data, not optional profile info, so it's
+  // requested at login rather than left out entirely. Still deliberately
+  // minimal beyond that (no `profile` scope) — no name, picture, or other
+  // profile data is needed.
+  url.searchParams.set('scope', 'openid email')
   url.searchParams.set('state', state)
   return url.toString()
 }
@@ -129,6 +132,7 @@ function base64UrlDecode(segment: string): Buffer {
 
 export interface VerifiedIdToken {
   subject: string
+  email: string
 }
 
 // Local verification (JWKS + RS256), not Google's `tokeninfo` endpoint —
@@ -143,7 +147,7 @@ export async function verifyIdToken(config: GoogleOAuthConfig, idToken: string):
   const [headerB64, payloadB64, signatureB64] = parts as [string, string, string]
 
   let header: { kid?: string; alg?: string }
-  let payload: { sub?: string; aud?: string; iss?: string; exp?: number }
+  let payload: { sub?: string; aud?: string; iss?: string; exp?: number; email?: string; email_verified?: boolean }
   try {
     header = JSON.parse(base64UrlDecode(headerB64).toString('utf8'))
     payload = JSON.parse(base64UrlDecode(payloadB64).toString('utf8'))
@@ -192,5 +196,16 @@ export async function verifyIdToken(config: GoogleOAuthConfig, idToken: string):
     throw new GoogleOAuthError('id_token missing subject')
   }
 
-  return { subject: payload.sub }
+  if (!payload.email) {
+    throw new GoogleOAuthError('id_token missing email')
+  }
+
+  // Google's own OIDC docs warn against trusting the `email` claim without
+  // checking this flag. Email is now essential contact/record data (see
+  // CHARTER.md §4), so an unverified address must never be accepted.
+  if (payload.email_verified !== true) {
+    throw new GoogleOAuthError('id_token email not verified')
+  }
+
+  return { subject: payload.sub, email: payload.email }
 }
